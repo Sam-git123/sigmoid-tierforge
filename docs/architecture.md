@@ -1,6 +1,6 @@
 # TierForge architecture — Phase 0 proposal
 
-Status: Phase 3 basic enrichment is implemented alongside the Phase 1 foundation and Phase 2 ingestion flow. The API process starts queued jobs asynchronously, uses a fixed worker pool, one shared paced limiter, PostgreSQL claims, and fenced success persistence. Retry scheduling, expired-lease recovery, systemic-failure handling, scoring, and dashboard flows remain future work. See [current schema](database-schema.md), [CSV policy](csv-ingestion.md), and [enrichment policy](enrichment-engine.md).
+Status: Phase 4 resilient attempts are implemented alongside the foundation, ingestion, and basic worker flow. The fixed pool now retries typed transient failures with persisted full-jitter scheduling, independent deadlines, database-derived wakeups, and strict token fences. General expired-lease recovery, systemic-failure handling, scoring, and dashboard flows remain future work. See [current schema](database-schema.md), [CSV policy](csv-ingestion.md), and [enrichment policy](enrichment-engine.md).
 
 ## Authority and scope
 
@@ -97,22 +97,22 @@ Use one process-wide limiter at the HTTP dispatch boundary, shared by initial at
 
 Reserve an available concurrency slot, claim one row, then wait for admission without holding database locks. Recheck local cancellation/job-stop signals and lease validity before dispatch; expired claims are not sent. Waiting for admission consumes lease time but not an HTTP timeout. Claiming already consumed the attempt budget. If no work is due, sleep until the nearest retry time or a short poll; do not spin. Backoff is persisted as `next_attempt_at`, so waiting retries hold no slot.
 
-Default logical concurrency is six. The 10-second HTTP deadline starts at dispatch and covers receiving/reading the complete response body. Phase 3 aborts on timeout and records the attempt as a terminal store failure. Future retry/reaper work will reclaim timed-out or expired work and exercise late-callback races; complete event-loop/process failure remains a restart limitation.
+Default logical concurrency is six. The 8-second logical deadline starts at dispatch and covers receiving/reading the complete response body. It wins independently of whether abort settles the transport, allowing the owned attempt to enter retry wait and releasing the worker loop. The abandoned promise retains rejection handling. General recovery of processing rows lost to a crashed worker/process remains a next-phase watchdog concern.
 
 The limiter regulates this application's sends, not other callers of the simulator. Do not run another worker process, development duplicate worker, or manual enrichment load alongside it expecting a global guarantee. Normal network timing can still produce a 429, which remains retryable. Health checks are documented as unmetered and are not enrichment attempts.
 
 ### Retry classification
 
-- Retry HTTP 429, HTTP 500/other 5xx, timeout, and network/connection failures. At most six attempts total (initial plus five retries).
+- Retry HTTP 429, HTTP 500/other 5xx, timeout, and network/connection failures. At most five attempts total (initial plus four retries).
 - For failed attempt number `n`, select full jitter uniformly from `0` to `min(30 seconds, 1 second * 2^(n-1))`. Persist the selected retry timestamp, do not recompute it on every scan.
-- If 429 supplies a valid `Retry-After` delta or HTTP date, honor it as a lower bound on both the next retry and the shared limiter cooldown. The README does not promise this header. If it exceeds the chosen 120-second acceptable cooldown, terminate the job with an explicit excessive-upstream-delay reason instead of retrying earlier than requested. Missing/malformed headers use jitter plus the limiter.
+- If 429 or a transient 5xx supplies a valid `Retry-After` delta or HTTP date, honor it as a lower bound on both the next retry and shared limiter cooldown. The README does not promise this header. Missing/malformed headers use jitter plus normal paced admission. A future systemic policy may bound excessive provider cooldowns; Phase 4 honors the value rather than violating it.
 - Treat non-429 4xx as permanent failures for that store; 401/403/404/405 identify a likely job-wide integration/configuration failure and trigger immediate systemic termination. No credentials are required by the documented simulator.
 - A 200 with mismatched `store_id`, missing fields, nonnumeric/nonfinite/negative metrics, or malformed JSON is a contract failure, never success. Do not substitute zero values. Fail that store without retry; repeated contract failures participate in systemic detection.
 - Persist structured codes, safe messages, HTTP status, attempt number, and timestamps. Avoid raw upstream HTML or exception stacks in user-visible errors. Limit captured error text to 2 KiB.
 
 ### Leases, fencing, and worker recovery
 
-Default lease length is 20 seconds, greater than the 10-second HTTP deadline plus admission and persistence margin. Reap every second. Use database wall-clock time evaluated after locks are acquired for expiry comparisons, not application clocks or a transaction-start timestamp that became stale while waiting.
+Default lease length is 20 seconds, greater than the 8-second HTTP deadline plus admission and persistence margin. Use database wall-clock time evaluated after locks are acquired for expiry comparisons, not application clocks or a transaction-start timestamp that became stale while waiting. The planned one-second general reaper remains Phase 5 work.
 
 Every success/failure/timeout callback checks, under locks: job still `running`, store still `processing`, submitted token equals its current token, and lease remains unexpired. A guarded transition affecting zero rows means ownership was lost; return without mutating results, attempt outcome, scoring, counters, or job failure streak. Emit a diagnostic stale-response log only.
 

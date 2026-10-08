@@ -5,10 +5,21 @@ import type {
   EnrichmentMetrics,
   JobProcessingSummary,
 } from '../domain/enrichment.js';
+import type { EnrichmentErrorCode } from '../errors/enrichment-error.js';
 
 export interface AttemptFailure {
-  code: string;
+  code: EnrichmentErrorCode;
   message: string;
+}
+
+export type FailureResult =
+  | { disposition: 'retry_wait'; nextAttemptAt: Date }
+  | { disposition: 'failed' }
+  | { disposition: 'stale' };
+
+export interface RetryWakeup {
+  nextRetryAt: Date;
+  delayMs: number;
 }
 
 export interface EnrichmentRepository {
@@ -16,7 +27,12 @@ export interface EnrichmentRepository {
   startJob(jobId: string): Promise<boolean>;
   claimNextStore(jobId: string, leaseDurationMs: number): Promise<ClaimedStore | null>;
   completeStore(claim: ClaimedStore, metrics: EnrichmentMetrics): Promise<boolean>;
-  failStore(claim: ClaimedStore, failure: AttemptFailure): Promise<boolean>;
+  recordAttemptFailure(
+    claim: ClaimedStore,
+    failure: AttemptFailure,
+    retryDelayMs: number | null,
+  ): Promise<FailureResult>;
+  getNextRetryWakeup(jobId: string): Promise<RetryWakeup | null>;
   finishJobIfDone(jobId: string): Promise<JobProcessingSummary | null>;
 }
 
@@ -66,8 +82,10 @@ export function createEnrichmentRepository(pool: Pool): EnrichmentRepository {
         if (job.rows[0]?.status !== 'running') return null;
         const selected = await client.query<{ storeId: string }>(
           `SELECT store_id AS "storeId" FROM job_stores
-           WHERE job_id = $1 AND status = 'pending'
-           ORDER BY created_at, store_id
+           WHERE job_id = $1 AND attempt_count < max_attempts
+             AND (status = 'pending'
+               OR (status = 'retry_wait' AND next_attempt_at <= clock_timestamp()))
+           ORDER BY COALESCE(next_attempt_at, created_at), store_id
            FOR UPDATE SKIP LOCKED LIMIT 1`,
           [jobId],
         );
@@ -79,12 +97,14 @@ export function createEnrichmentRepository(pool: Pool): EnrichmentRepository {
              attempt_count = attempt_count + 1,
              lease_token = gen_random_uuid(),
              lease_expires_at = clock_timestamp() + ($3 * interval '1 millisecond'),
+             next_attempt_at = NULL,
              last_error_code = NULL,
              last_error_message = NULL,
              updated_at = clock_timestamp()
            WHERE job_id = $1 AND store_id = $2
            RETURNING job_id AS "jobId", store_id AS "storeId", store_name AS "storeName",
              address, city, state, country, attempt_count AS "attemptCount",
+             max_attempts AS "maxAttempts",
              lease_token AS "leaseToken", lease_expires_at AS "leaseExpiresAt"`,
           [jobId, storeId, leaseDurationMs],
         );
@@ -129,23 +149,66 @@ export function createEnrichmentRepository(pool: Pool): EnrichmentRepository {
       });
     },
 
-    async failStore(claim, failure) {
+    async recordAttemptFailure(claim, failure, retryDelayMs) {
       return withTransaction(pool, async (client) => {
         const job = await client.query<{ status: string }>(
           'SELECT status FROM jobs WHERE id = $1 FOR UPDATE',
           [claim.jobId],
         );
-        if (job.rows[0]?.status !== 'running') return false;
-        const failed = await client.query(
-          `UPDATE job_stores SET status = 'failed', lease_token = NULL,
-             lease_expires_at = NULL, last_error_code = $4, last_error_message = $5,
-             updated_at = clock_timestamp()
+        if (job.rows[0]?.status !== 'running') return { disposition: 'stale' };
+        const owned = await client.query<{ attemptCount: number; maxAttempts: number }>(
+          `SELECT attempt_count AS "attemptCount", max_attempts AS "maxAttempts"
+           FROM job_stores
            WHERE job_id = $1 AND store_id = $2 AND status = 'processing'
-             AND lease_token = $3 AND lease_expires_at > clock_timestamp()`,
+             AND lease_token = $3 AND lease_expires_at > clock_timestamp()
+           FOR UPDATE`,
+          [claim.jobId, claim.storeId, claim.leaseToken],
+        );
+        const current = owned.rows[0];
+        if (!current) return { disposition: 'stale' };
+        if (retryDelayMs !== null && current.attemptCount < current.maxAttempts) {
+          const scheduled = await client.query<{ nextAttemptAt: Date }>(
+            `UPDATE job_stores SET status = 'retry_wait', lease_token = NULL,
+               lease_expires_at = NULL,
+               next_attempt_at = clock_timestamp() + ($4 * interval '1 millisecond'),
+               last_error_code = $5, last_error_message = $6,
+               updated_at = clock_timestamp()
+             WHERE job_id = $1 AND store_id = $2 AND lease_token = $3
+             RETURNING next_attempt_at AS "nextAttemptAt"`,
+            [
+              claim.jobId,
+              claim.storeId,
+              claim.leaseToken,
+              retryDelayMs,
+              failure.code,
+              failure.message,
+            ],
+          );
+          return { disposition: 'retry_wait', nextAttemptAt: scheduled.rows[0]!.nextAttemptAt };
+        }
+        await client.query(
+          `UPDATE job_stores SET status = 'failed', lease_token = NULL,
+             lease_expires_at = NULL, next_attempt_at = NULL,
+             last_error_code = $4, last_error_message = $5,
+             updated_at = clock_timestamp()
+           WHERE job_id = $1 AND store_id = $2 AND lease_token = $3`,
           [claim.jobId, claim.storeId, claim.leaseToken, failure.code, failure.message],
         );
-        return failed.rowCount === 1;
+        return { disposition: 'failed' };
       });
+    },
+
+    async getNextRetryWakeup(jobId) {
+      const result = await pool.query<{ nextRetryAt: Date | null; delayMs: number | null }>(
+        `SELECT min(next_attempt_at) AS "nextRetryAt",
+           greatest(0, extract(epoch FROM (min(next_attempt_at) - clock_timestamp())) * 1000)
+             ::double precision AS "delayMs"
+         FROM job_stores WHERE job_id = $1 AND status = 'retry_wait'`,
+        [jobId],
+      );
+      const row = result.rows[0];
+      if (!row?.nextRetryAt || row.delayMs === null) return null;
+      return { nextRetryAt: row.nextRetryAt, delayMs: row.delayMs };
     },
 
     async finishJobIfDone(jobId) {

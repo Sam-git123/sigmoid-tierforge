@@ -10,6 +10,7 @@ export interface EnrichmentStore {
 
 export interface ClaimedStore extends EnrichmentStore {
   attemptCount: number;
+  maxAttempts: number;
   leaseToken: string;
   leaseExpiresAt: Date;
 }

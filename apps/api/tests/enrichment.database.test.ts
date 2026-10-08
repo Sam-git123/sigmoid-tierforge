@@ -2,8 +2,9 @@ import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import request from 'supertest';
 import { createApp } from '../src/app.js';
-import type { EnrichmentClient } from '../src/clients/enrichment-client.js';
+import { createEnrichmentClient, type EnrichmentClient } from '../src/clients/enrichment-client.js';
 import type { StoreInput } from '../src/domain/jobs.js';
+import { EnrichmentAttemptError } from '../src/errors/enrichment-error.js';
 import { createLogger } from '../src/logging/logger.js';
 import { createEnrichmentRepository } from '../src/repositories/enrichment-repository.js';
 import { createHealthRepository } from '../src/repositories/health-repository.js';
@@ -54,7 +55,12 @@ describe.skipIf(!connectionString)('enrichment engine with PostgreSQL', () => {
   it('claims pending work with a lease and increments the attempt atomically', async () => {
     const { job, repository } = await createRunningJob(['S1']);
     const claimed = await repository.claimNextStore(job.jobId, 20_000);
-    expect(claimed).toMatchObject({ jobId: job.jobId, storeId: 'S1', attemptCount: 1 });
+    expect(claimed).toMatchObject({
+      jobId: job.jobId,
+      storeId: 'S1',
+      attemptCount: 1,
+      maxAttempts: 4,
+    });
     expect(claimed?.leaseToken).toMatch(/^[0-9a-f-]{36}$/);
     expect(claimed!.leaseExpiresAt.getTime()).toBeGreaterThan(Date.now());
     expect(await repository.claimNextStore(job.jobId, 20_000)).toBeNull();
@@ -136,6 +142,301 @@ describe.skipIf(!connectionString)('enrichment engine with PostgreSQL', () => {
     ).toBe(0);
   });
 
+  it('persists retry timing and claims retry_wait only after it is due', async () => {
+    const { job, repository } = await createRunningJob(['S1']);
+    const first = await repository.claimNextStore(job.jobId, 20_000);
+    if (!first) throw new Error('Expected a claim');
+    const before = Date.now();
+    const scheduled = await repository.recordAttemptFailure(
+      first,
+      { code: 'PROVIDER_ERROR', message: 'Enrichment API returned HTTP 500.' },
+      500,
+    );
+    expect(scheduled.disposition).toBe('retry_wait');
+    if (scheduled.disposition !== 'retry_wait') throw new Error('Expected retry scheduling');
+    expect(scheduled.nextAttemptAt.getTime()).toBeGreaterThanOrEqual(before + 450);
+    expect(await repository.getNextRetryWakeup(job.jobId)).toMatchObject({
+      nextRetryAt: scheduled.nextAttemptAt,
+    });
+    expect(await repository.claimNextStore(job.jobId, 20_000)).toBeNull();
+    const waiting = (
+      await database.pool.query(
+        `SELECT status, attempt_count, next_attempt_at, lease_token, last_error_code
+         FROM job_stores WHERE job_id = $1`,
+        [job.jobId],
+      )
+    ).rows[0];
+    expect(waiting).toMatchObject({
+      status: 'retry_wait',
+      attempt_count: 1,
+      lease_token: null,
+      last_error_code: 'PROVIDER_ERROR',
+    });
+    await database.pool.query(
+      `UPDATE job_stores SET next_attempt_at = clock_timestamp() - interval '1 millisecond'
+       WHERE job_id = $1`,
+      [job.jobId],
+    );
+    const second = await repository.claimNextStore(job.jobId, 20_000);
+    expect(second).toMatchObject({ storeId: 'S1', attemptCount: 2, maxAttempts: 4 });
+    expect(second?.leaseToken).not.toBe(first.leaseToken);
+  });
+
+  it('rejects stale success and stale failure after a retry has succeeded', async () => {
+    const { job, repository } = await createRunningJob(['S1']);
+    const first = await repository.claimNextStore(job.jobId, 20_000);
+    if (!first) throw new Error('Expected the first claim');
+    await repository.recordAttemptFailure(
+      first,
+      { code: 'TIMEOUT', message: 'Enrichment request timed out.' },
+      0,
+    );
+    const second = await repository.claimNextStore(job.jobId, 20_000);
+    if (!second) throw new Error('Expected the retry claim');
+    const acceptedMetrics = {
+      estimatedMonthlyFootfall: 20,
+      estimatedMonthlyRevenue: 200,
+      storeSizeSqft: 2000,
+    };
+    expect(await repository.completeStore(second, acceptedMetrics)).toBe(true);
+    expect(
+      await repository.completeStore(first, {
+        estimatedMonthlyFootfall: 10,
+        estimatedMonthlyRevenue: 100,
+        storeSizeSqft: 1000,
+      }),
+    ).toBe(false);
+    await expect(
+      repository.recordAttemptFailure(
+        first,
+        { code: 'NETWORK_ERROR', message: 'Late network failure.' },
+        1000,
+      ),
+    ).resolves.toEqual({ disposition: 'stale' });
+    const persisted = (
+      await database.pool.query(
+        `SELECT s.status, s.attempt_count, e.estimated_monthly_footfall
+         FROM job_stores s JOIN store_enrichments e USING (job_id, store_id)
+         WHERE s.job_id = $1`,
+        [job.jobId],
+      )
+    ).rows[0];
+    expect(persisted).toEqual({
+      status: 'succeeded',
+      attempt_count: 2,
+      estimated_monthly_footfall: '20.00',
+    });
+  });
+
+  it('admits only one of two simultaneous completion attempts', async () => {
+    const { job, repository } = await createRunningJob(['S1']);
+    const claimed = await repository.claimNextStore(job.jobId, 20_000);
+    if (!claimed) throw new Error('Expected a claim');
+    const results = await Promise.all([
+      repository.completeStore(claimed, {
+        estimatedMonthlyFootfall: 1,
+        estimatedMonthlyRevenue: 2,
+        storeSizeSqft: 3,
+      }),
+      repository.completeStore(claimed, {
+        estimatedMonthlyFootfall: 4,
+        estimatedMonthlyRevenue: 5,
+        storeSizeSqft: 6,
+      }),
+    ]);
+    expect(results.sort()).toEqual([false, true]);
+    expect(
+      (await database.pool.query('SELECT count(*)::int AS count FROM store_enrichments')).rows[0]
+        .count,
+    ).toBe(1);
+  });
+
+  it('runs a persisted 500 retry through the coordinator and then succeeds', async () => {
+    const job = await createJobRepository(database.pool).createJobWithStores([store('S1')], 3);
+    const client: EnrichmentClient = {
+      enrich: vi
+        .fn()
+        .mockRejectedValueOnce(
+          new EnrichmentAttemptError({
+            code: 'PROVIDER_ERROR',
+            message: 'Enrichment API returned HTTP 500.',
+            retryable: true,
+            status: 500,
+          }),
+        )
+        .mockResolvedValueOnce({
+          estimatedMonthlyFootfall: 10,
+          estimatedMonthlyRevenue: 20,
+          storeSizeSqft: 30,
+        }),
+    };
+    const coordinator = createCoordinator({
+      repository: createEnrichmentRepository(database.pool),
+      client,
+      rateLimiter: { waitForSlot: vi.fn().mockResolvedValue(undefined), deferFor: vi.fn() },
+      logger,
+      concurrency: 2,
+      leaseDurationMs: 20_000,
+      retryBaseDelayMs: 10,
+      retryMaxDelayMs: 100,
+      random: () => 1,
+    });
+    try {
+      await coordinator.start();
+      await waitUntil(async () => {
+        const result = await database.pool.query('SELECT status FROM jobs WHERE id = $1', [
+          job.jobId,
+        ]);
+        return result.rows[0]?.status === 'completed';
+      });
+      expect(client.enrich).toHaveBeenCalledTimes(2);
+      expect(
+        (
+          await database.pool.query(
+            'SELECT status, attempt_count, last_error_code FROM job_stores WHERE job_id = $1',
+            [job.jobId],
+          )
+        ).rows[0],
+      ).toEqual({ status: 'succeeded', attempt_count: 2, last_error_code: null });
+    } finally {
+      await coordinator.stop();
+    }
+  });
+
+  it('stops at the configured attempt limit with a meaningful exhausted reason', async () => {
+    const job = await createJobRepository(database.pool).createJobWithStores([store('S1')], 2);
+    const client: EnrichmentClient = {
+      enrich: vi.fn().mockRejectedValue(
+        new EnrichmentAttemptError({
+          code: 'PROVIDER_ERROR',
+          message: 'Enrichment API returned HTTP 500.',
+          retryable: true,
+          status: 500,
+        }),
+      ),
+    };
+    const coordinator = createCoordinator({
+      repository: createEnrichmentRepository(database.pool),
+      client,
+      rateLimiter: { waitForSlot: vi.fn().mockResolvedValue(undefined), deferFor: vi.fn() },
+      logger,
+      concurrency: 1,
+      leaseDurationMs: 20_000,
+      retryBaseDelayMs: 5,
+      retryMaxDelayMs: 20,
+      random: () => 1,
+    });
+    try {
+      await coordinator.start();
+      await waitUntil(async () => {
+        const result = await database.pool.query('SELECT status FROM jobs WHERE id = $1', [
+          job.jobId,
+        ]);
+        return result.rows[0]?.status === 'failed';
+      });
+      expect(client.enrich).toHaveBeenCalledTimes(2);
+      expect(
+        (
+          await database.pool.query(
+            `SELECT status, attempt_count, last_error_code, last_error_message
+             FROM job_stores WHERE job_id = $1`,
+            [job.jobId],
+          )
+        ).rows[0],
+      ).toEqual({
+        status: 'failed',
+        attempt_count: 2,
+        last_error_code: 'RETRY_EXHAUSTED',
+        last_error_message:
+          'Retry attempts exhausted after 2 attempts. Last error: PROVIDER_ERROR - Enrichment API returned HTTP 500.',
+      });
+    } finally {
+      await coordinator.stop();
+    }
+  });
+
+  it('ignores a transport response that resolves after timeout and retry success', async () => {
+    const job = await createJobRepository(database.pool).createJobWithStores([store('S1')], 3);
+    let resolveLate!: (response: Response) => void;
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockImplementationOnce(
+        () =>
+          new Promise<Response>((resolve) => {
+            resolveLate = resolve;
+          }),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            store_id: 'S1',
+            estimated_monthly_footfall: 20,
+            estimated_monthly_revenue: 200,
+            store_size_sqft: 2000,
+          }),
+          { status: 200 },
+        ),
+      );
+    const coordinator = createCoordinator({
+      repository: createEnrichmentRepository(database.pool),
+      client: createEnrichmentClient({
+        baseUrl: 'http://127.0.0.1:8000',
+        timeoutMs: 10,
+        fetch: fetcher,
+      }),
+      rateLimiter: { waitForSlot: vi.fn().mockResolvedValue(undefined), deferFor: vi.fn() },
+      logger,
+      concurrency: 1,
+      leaseDurationMs: 20_000,
+      retryBaseDelayMs: 5,
+      retryMaxDelayMs: 20,
+      random: () => 1,
+    });
+    try {
+      await coordinator.start();
+      await waitUntil(async () => {
+        const result = await database.pool.query('SELECT status FROM jobs WHERE id = $1', [
+          job.jobId,
+        ]);
+        return result.rows[0]?.status === 'completed';
+      });
+      expect(fetcher).toHaveBeenCalledTimes(2);
+      resolveLate(
+        new Response(
+          JSON.stringify({
+            store_id: 'S1',
+            estimated_monthly_footfall: 999,
+            estimated_monthly_revenue: 999,
+            store_size_sqft: 999,
+          }),
+          { status: 200 },
+        ),
+      );
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(
+        (
+          await database.pool.query(
+            `SELECT s.status, s.attempt_count, e.estimated_monthly_footfall,
+               e.estimated_monthly_revenue, e.store_size_sqft
+             FROM job_stores s JOIN store_enrichments e USING (job_id, store_id)
+             WHERE s.job_id = $1`,
+            [job.jobId],
+          )
+        ).rows,
+      ).toEqual([
+        {
+          status: 'succeeded',
+          attempt_count: 2,
+          estimated_monthly_footfall: '20.00',
+          estimated_monthly_revenue: '200.00',
+          store_size_sqft: '2000.00',
+        },
+      ]);
+    } finally {
+      await coordinator.stop();
+    }
+  });
+
   it('finalizes a mixed result as completed with errors', async () => {
     const { job, repository } = await createRunningJob(['S1', 'S2']);
     const first = await repository.claimNextStore(job.jobId, 20_000);
@@ -149,11 +450,15 @@ describe.skipIf(!connectionString)('enrichment engine with PostgreSQL', () => {
       }),
     ).toBe(true);
     expect(
-      await repository.failStore(second, {
-        code: 'ENRICHMENT_HTTP_ERROR',
-        message: 'Enrichment API returned HTTP 500.',
-      }),
-    ).toBe(true);
+      await repository.recordAttemptFailure(
+        second,
+        {
+          code: 'PERMANENT_ERROR',
+          message: 'Enrichment API returned HTTP 400.',
+        },
+        null,
+      ),
+    ).toEqual({ disposition: 'failed' });
     await expect(repository.finishJobIfDone(job.jobId)).resolves.toEqual({
       jobId: job.jobId,
       status: 'completed_with_errors',
@@ -191,10 +496,13 @@ describe.skipIf(!connectionString)('enrichment engine with PostgreSQL', () => {
     const coordinator = createCoordinator({
       repository: createEnrichmentRepository(database.pool),
       client,
-      rateLimiter: { waitForSlot: vi.fn().mockResolvedValue(undefined) },
+      rateLimiter: { waitForSlot: vi.fn().mockResolvedValue(undefined), deferFor: vi.fn() },
       logger,
       concurrency: 2,
       leaseDurationMs: 20_000,
+      retryBaseDelayMs: 10,
+      retryMaxDelayMs: 100,
+      random: () => 1,
     });
     const app = createApp({
       logger,

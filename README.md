@@ -1,6 +1,6 @@
 # TierForge
 
-Phase 3 implementation for Sigmoid's resilient bulk store scoring/tiering exercise. Implemented: pnpm workspace, React shell, Express health/job API, PostgreSQL schema/migrations, bounded CSV ingestion, asynchronous enrichment workers, a shared five-per-second request limiter, lease-fenced persistence, and persisted job progress. Scoring, the dashboard, and advanced retry/recovery behavior are intentionally **not implemented**.
+Phase 4 implementation for Sigmoid's resilient bulk store scoring/tiering exercise. Implemented: pnpm workspace, React shell, Express health/job API, PostgreSQL schema/migrations, bounded CSV ingestion, asynchronous enrichment workers, shared five-per-second admission, bounded persisted retries, independent HTTP deadlines, lease-fenced persistence, and persisted job progress. Scoring, the dashboard, expired-lease watchdog, and job-wide systemic-failure policy are intentionally **not implemented**.
 
 ## Prerequisites
 
@@ -119,13 +119,13 @@ Five domain tables: `jobs`, `job_stores`, `store_enrichments`, `scoring_configs`
 
 Migrations are ordered, forward-only SQL files in `apps/api/migrations/`. A PostgreSQL advisory lock serializes migration runners; each file and its ledger insert commit in one transaction. Never edit an applied migration: add a new numbered file. Failed DDL rolls back; changed/missing applied files cause failure. The CLI uses bounded pool/statement timeouts. Keep the migrations directory alongside the API source/build when distributing the backend.
 
-The one-active-job constraint covers both `queued` and `running`. Exact NUMERIC metrics/configuration/scores and composite foreign keys preserve store/job/revision identity. Phase 3 uses the original schema without a migration: existing lease columns fence work and `store_enrichments` stores accepted metrics.
+The one-active-job constraint covers both `queued` and `running`. Exact NUMERIC metrics/configuration/scores and composite foreign keys preserve store/job/revision identity. Phases 3 and 4 use the original schema without another migration: existing lease/retry columns fence work and schedule retries, while `store_enrichments` stores accepted metrics.
 
 ## Architecture and boundaries
 
 The API has routes, controllers, services, repositories, database modules, middleware, an enrichment client, and a worker coordinator. Six logical loops share one monotonic limiter, claim one row at a time through `FOR UPDATE SKIP LOCKED`, and never hold a transaction across limiter or network waits. The frontend has React Router, TanStack Query, Tailwind's Vite plugin, and a reusable fetch client; no upload or dashboard screen is part of this phase.
 
-Later phases will implement the remaining [planned architecture](docs/architecture.md), using the [original requirements](docs/requirements/tierforge-requirements.md). See the [implementation plan](docs/implementation-plan.md), [enrichment policy](docs/enrichment-engine.md), and Phase 1–3 verification reports.
+Later phases will implement the remaining [planned architecture](docs/architecture.md), using the [original requirements](docs/requirements/tierforge-requirements.md). See the [implementation plan](docs/implementation-plan.md), [enrichment policy](docs/enrichment-engine.md), and [Phase 4 verification report](docs/phase-4-report.md).
 
 ## Provided simulator
 
@@ -161,7 +161,8 @@ This fallback is specific to this workspace, not a portable replacement for Dock
 ## Known limitations
 
 - Docker Compose startup is unverified in this environment; native PostgreSQL tests do not establish container startup.
-- API/transport/timeout/contract failures are terminal store failures in Phase 3. Retry scheduling, backoff, lease recovery, and systemic-failure handling remain for later phases.
+- HTTP 429/5xx, network errors, and timeouts retry up to `MAX_ATTEMPTS`; invalid responses and permanent HTTP failures do not retry. Full-jitter backoff is persisted, and valid `Retry-After` values are lower bounds for the row and shared limiter.
+- General expired-lease recovery and job-wide systemic-failure handling remain for the next phase.
 - Restart detection can resume pending rows in an active job, but it does not reclaim rows left processing by a hard stop; full restart resumability is not claimed.
 - No scoring calculations or dashboard are implemented.
 - CSV upload uses bounded in-memory multipart storage (10 MiB by default) and retains validated records until its single creation transaction completes; this is deliberate for the 5,000-row take-home scope.

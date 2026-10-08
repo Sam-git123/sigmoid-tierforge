@@ -1,6 +1,6 @@
 # TierForge implementation plan — Phase 0
 
-Phases 0–3 are implemented through the basic enrichment engine authorized for Phase 3. Advanced retries/recovery, scoring, and dashboard work remain plans requiring later requests. See the Phase 1–3 verification reports and [current schema](database-schema.md). Checkboxes remain unchecked until the complete requirement has implementation evidence; a deliberately partial Phase 3 resilience step does not claim later behavior.
+Phases 0–4 are implemented through bounded resilient enrichment attempts. The job-wide watchdog/general lease reaper, scoring, and dashboard work remain plans requiring later requests. See the phase verification reports and [current schema](database-schema.md). Checkboxes remain unchecked until the complete requirement has implementation evidence; Phase 4 does not claim the next phase's systemic-failure behavior.
 
 Sources: [complete original assignment](requirements/tierforge-requirements.md), [simulator README](../enrichment_simulator/README.md), and the user's Phase 0 brief. See [architecture](architecture.md) for flow/transaction details and [decisions](decisions-and-assumptions.md) for chosen defaults. `R` identifies assignment core requirements, `Q` evaluation/quality criteria, `U` user-directed constraints, `B` assignment bonuses, and `D` implementation choices. Phase references connect each item to planned acceptance evidence.
 
@@ -10,7 +10,7 @@ Sources: [complete original assignment](requirements/tierforge-requirements.md),
 
 - [ ] **R01 — §1:** Process a large store list through enrichment and user-configurable scoring/tiering. Evidence: Phase 5 full 5,000-row exercise and dashboard; Phases 2–4 provide constituent flows.
 - [ ] **Q01 — §2 architecture/data modeling:** Separate unreliable enrichment, persisted raw data, work units, and deterministic calculated scores. Evidence: Phases 1/3/4 boundaries, schema review, and zero-network scoring test.
-- [ ] **Q02 — §2 resilience/concurrency:** Explain and demonstrate retries, timeouts, recovery, stale-result rejection, and concurrency correctness. Evidence: Phase 3 deterministic fault tests using actual PostgreSQL transactions.
+- [ ] **Q02 — §2 resilience/concurrency:** Phase 4 covers per-attempt retries, timeouts, fencing, and races; Phase 5 must add watchdog/systemic evidence.
 - [ ] **Q03 — §2 code quality:** Readable names, consistent error handling, understandable code that can be defended in review. Evidence: each phase's focused review and final architecture walkthrough.
 - [ ] **Q04 — §2 tests:** Tests are optional in the assignment, encouraged for retry/backoff/formula/boundaries; this project's user-specified stack and plan adopt them. Evidence: Phases 3–5, single documented test command.
 - [ ] **R02 — §2/§6 scope:** Respect 2–3 days of effort and deliver core before bonuses. Evidence: phased time budget, explicit deferred scope, honest final limitations.
@@ -30,11 +30,11 @@ Sources: [complete original assignment](requirements/tierforge-requirements.md),
 
 ### Scoring — Section 4, Step 3
 
-- [ ] **R10:** UI configuration has one bar and one 0–100% weight for each of three metrics; weights sum to 100%. Evidence: Phase 4 form/API validation, exact decimal sum tests.
-- [ ] **R11:** User can configure Large/Medium/Small score thresholds. Evidence: Phase 4 inclusive comparison tests and validated configuration UI.
-- [ ] **R12:** Score equals the sum of weights for metrics meeting their bars; no normalization or ranges. Evidence: Phase 4 SQL formula tests, equality boundaries, 0/100 scores.
-- [ ] **R13:** Reproduce worked example: bars 15000/150000/8000, weights 50/30/20, thresholds 70/40; A(40000,400000,18000)=100/Large, B(20000,100000,5000)=50/Medium, C(2000,20000,9000)=20/Small. Evidence: Phase 4 fixtures with those exact values.
-- [ ] **R14:** Score every successful enrichment from stored data, never call enrichment to recalculate, and support fast safe reruns after any configuration change. Evidence: Phase 4 zero-call test, atomic rollback/concurrent submission tests, active-enrichment race test, and 5,000-row timing measurement.
+- [ ] **R10:** UI configuration has one bar and one 0–100% weight for each of three metrics; weights sum to 100%. Evidence: Phase 6 form/API validation, exact decimal sum tests.
+- [ ] **R11:** User can configure Large/Medium/Small score thresholds. Evidence: Phase 6 inclusive comparison tests and validated configuration UI.
+- [ ] **R12:** Score equals the sum of weights for metrics meeting their bars; no normalization or ranges. Evidence: Phase 6 SQL formula tests, equality boundaries, 0/100 scores.
+- [ ] **R13:** Reproduce worked example: bars 15000/150000/8000, weights 50/30/20, thresholds 70/40; A(40000,400000,18000)=100/Large, B(20000,100000,5000)=50/Medium, C(2000,20000,9000)=20/Small. Evidence: Phase 6 fixtures with those exact values.
+- [ ] **R14:** Score every successful enrichment from stored data, never call enrichment to recalculate, and support fast safe reruns after any configuration change. Evidence: Phase 6 zero-call test, atomic rollback/concurrent submission tests, active-enrichment race test, and 5,000-row timing measurement.
 
 ### Dashboard — Section 4, Step 4
 
@@ -47,17 +47,17 @@ Sources: [complete original assignment](requirements/tierforge-requirements.md),
 
 - [ ] **R19 — §5.1:** Include supplied sample files, including ready-made 5,000-row CSV and generator if provided. CSV is present; generator was not found. Evidence: Phase 5 asset inventory and documented missing file or user-provided recovery.
 - [ ] **R20 — §5.2:** Run the unchanged local simulator without an internet dependency, account, or API key for enrichment. Evidence: Phase 3 local run and Phase 5 README setup instructions.
-- [ ] **R21 — §5.2 mode 1:** Respect global 5 requests/second; handle 429. Evidence: Phase 3 all-attempt dispatch history and shared-limiter tests, including retries and scheduler stalls.
-- [ ] **R22 — §5.2 mode 2:** Handle approximately 10% transient 500 responses using bounded retry. Evidence: Phase 3 scripted error sequences and real-simulator observation; randomness is not an exact smoke-test assertion.
-- [ ] **R23 — §5.2 mode 3:** Handle 45–60-second delayed successes without stale results corrupting newer accepted work. Evidence: Phase 3 controlled late-response test that ignores cancellation and real simulator smoke run if delay occurs naturally.
+- [x] **R21 — §5.2 mode 1:** Respect global 5 requests/second; handle 429. Evidence: Phase 3/4 paced-limiter, shared cooldown, and 429-then-success tests; all retries use the same limiter.
+- [x] **R22 — §5.2 mode 2:** Handle approximately 10% transient 500 responses using bounded retry. Evidence: Phase 4 controlled 500-then-success and exhaustion tests with persisted attempts.
+- [x] **R23 — §5.2 mode 3:** Handle 45–60-second delayed successes without stale results corrupting newer accepted work. Evidence: Phase 4 independent deadline, ignored-abort late response, old-token success/failure, and one-result tests.
 - [ ] **R24 — §5.2 mode 4:** Recognize deterministic metrics for a store ID; correctness must still rely on fencing, not determinism. Evidence: Phase 3 repeated-ID contract smoke check and deliberately different old/new test responses to reveal overwrites.
 
 ### Required scope/resilience — Section 6.1
 
 - [ ] **R25:** End-to-end Steps 1–4 for a single job at a time. Evidence: Phases 2–5 active-job conflict test and complete core walkthrough.
-- [ ] **R26 — A:** Retry transient failures with a cap. Evidence: Phase 3 exactly six-or-fewer claims per store, no seventh dispatch, persisted backoff.
-- [ ] **R27 — B:** Reclaim work from calls/workers that do not return, retry on another worker task, and never double-count a late response. Evidence: Phase 3 hung-handler/reaper race tests with independent database clients.
-- [ ] **R28 — C:** Bound a systemically broken run and expose a clear terminal failure. Evidence: Phase 3 all-500/network-down scenarios, small jobs below systemic threshold, terminal-state/count assertions.
+- [x] **R26 — A:** Retry transient failures with a cap. Evidence: Phase 4 uses at most five attempts, persists jittered due times, and ends with `RETRY_EXHAUSTED`.
+- [ ] **R27 — B:** Phase 4 handles ignored-abort HTTP calls and stale callbacks; Phase 5 must add general expired-lease reclamation.
+- [ ] **R28 — C:** Bound a systemically broken run and expose a clear terminal failure. Evidence: Phase 5 watchdog scenarios.
 
 ### Final deliverables — Section 7 (planned, not produced in Phase 0)
 
@@ -77,15 +77,15 @@ Sources: [complete original assignment](requirements/tierforge-requirements.md),
 ## User-directed constraints and non-functional requirements
 
 - [ ] **U01:** React/TypeScript/Vite, Tailwind, TanStack Query, Node/TypeScript/Express, PostgreSQL/`pg`, Zod, Vitest/Supertest, pnpm workspaces, Docker Compose PostgreSQL. Phase 1 scaffold/build acceptance.
-- [ ] **U02:** One store per persisted work unit; asynchronous enrichment; durable processing, retry, success, and failure states. Phases 2/3 state and persistence tests.
-- [ ] **U03:** PostgreSQL queue, atomic `FOR UPDATE SKIP LOCKED` claim, lease tokens, concurrency-safe DB transitions, bounded retries with exponential backoff/jitter, timeout/network handling. Phase 3 real DB tests.
-- [x] **U04:** One process-wide limiter used by the background worker module without extra queue infrastructure. Phase 3 proves all current attempts share it; later retries must use the same instance.
-- [ ] **U05:** Separate raw enrichment from scores and enrichment module from scoring; set-based bulk scoring. Phase 4 dependency/SQL review and zero-network test.
+- [x] **U02:** One store per persisted work unit; asynchronous enrichment; durable processing, retry, success, and failure states. Phases 2–4 state and persistence tests.
+- [ ] **U03:** Phase 4 covers atomic claims, fencing, bounded jittered retries, and timeout/network handling; Phase 5 must add the general lease reaper.
+- [x] **U04:** One process-wide limiter used by the background worker module without extra queue infrastructure. Phase 4 proves initial and retry attempts share it, including provider cooldown.
+- [ ] **U05:** Separate raw enrichment from scores and enrichment module from scoring; set-based bulk scoring. Phase 6 dependency/SQL review and zero-network test.
 - [ ] **U06:** Polling dashboard; no authentication or infrastructure expansion. Phase 5 behavior/scope review.
 - [ ] **U07:** Phase 0 creates project guidance, architecture with three Mermaid diagrams, traceable plan, and explicit decisions/assumptions; no application implementation, package installation, or commits. Phase 0 document verification.
 - [x] **Q05:** Progress remains responsive while enrichment runs; upload HTTP request does not wait on remote work. Phase 3 controlled-client integration test holds enrichment open after the `202` response.
 - [ ] **Q06:** Bounded memory, no whole-job fan-out, bounded connection usage, no network waits inside DB transactions. Phases 2/3 limits and concurrency review.
-- [ ] **Q07:** Exact numeric scoring and atomic revision visibility. Phase 4 database precision and transaction tests.
+- [ ] **Q07:** Exact numeric scoring and atomic revision visibility. Phase 6 database precision and transaction tests.
 - [ ] **Q08:** Configurable operational defaults, structured actionable errors/logs, no false success reports. Phases 1/3/5 environment validation and failure walkthrough.
 - [ ] **Q09:** Responsive accessible forms, labels, keyboard operation, visible validation/loading/error states. Phase 5 manual checks; these are chosen quality goals, not additional assignment features.
 
@@ -144,7 +144,7 @@ Error envelope: `{error: {code, message, details?, requestId}}`. Invalid multipa
 
 ## Proposed folder structure
 
-This tree began as the Phase 0 target layout. The foundation, ingestion, client, repositories, and worker modules through Phase 3 now exist; scoring and dashboard portions remain planned.
+This tree began as the Phase 0 target layout. The foundation, ingestion, client, repositories, and worker modules through Phase 4 now exist; watchdog, scoring, and dashboard portions remain planned.
 
 ```text
 sigmoid-tierforge/
@@ -241,7 +241,24 @@ Evidence:
 
 Advanced 429/500 retry, persisted backoff, lease reaping, late-response races, attempt history, and systemic-failure termination remain unchecked requirements for the next resilience phase.
 
-### Phase 4 — Scoring configuration and recalculation (3.5 hours; future)
+### Phase 4 — Resilient enrichment attempts (implemented)
+
+Implemented typed transient/permanent errors, at most five attempts, pure capped exponential full jitter, database-time retry scheduling, due retry claims, coordinator wakeups, `Retry-After` lower bounds, independent 8-second deadlines, abandoned-promise rejection handling, and token-fenced failure paths.
+
+Evidence:
+
+- Deterministic 500, 429, network, timeout, permanent-error, and retry-exhaustion tests.
+- PostgreSQL due-time, new-token retry, stale success/failure, simultaneous completion, and no-duplicate-result tests.
+- A controlled transport ignores abort and resolves after retry success; accepted metrics remain those from the current token.
+- No worker loop sleeps through backoff and no transaction spans a rate-limit wait, backoff wait, or HTTP call.
+
+Job-wide systemic-failure termination and general expired-processing reclamation remain Phase 5.
+
+### Phase 5 — Systemic watchdog and lease recovery (future)
+
+Implement the independent expired-lease reaper, worker/process-interruption cleanup, bounded job-wide systemic-failure policy, and terminalization of all unfinished work. Do not conflate this watchdog with Phase 4's per-attempt logical timeout.
+
+### Phase 6 — Scoring configuration and recalculation (future)
 
 Implement form validation, immutable config revisions, exact SQL scoring, atomic publication, and same-formula scoring of subsequent successes.
 
@@ -253,7 +270,7 @@ Acceptance:
 - Tier counts/store rows refer to one explicit revision; newly successful stores receive that revision automatically. Failed/pending rows remain unscored.
 - Measure 5,000-row recalculation on the documented local environment; aim for under two seconds, a chosen target, not an assignment SLA. A five-second statement timeout rolls back cleanly. Covers R10–R14/R16, U05, Q07.
 
-### Phase 5 — Dashboard, integration, and submission preparation (6.5 hours; future)
+### Phase 7 — Dashboard, integration, and submission preparation (future)
 
 Complete polling dashboard, failure detail, scoring UI, tier-filtered list, README, final checks, and full-sample walkthrough. Prioritize core defect correction over UI polish or bonuses.
 

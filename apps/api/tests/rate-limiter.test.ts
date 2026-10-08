@@ -28,4 +28,20 @@ describe('shared request-start rate limiter', () => {
       expect(starts[index]! - starts[index - 5]!).toBeGreaterThan(1000);
     }
   });
+
+  it('applies a provider cooldown to callers already waiting for admission', async () => {
+    let time = 0;
+    const limiter = createRateLimiter({
+      minimumIntervalMs: 220,
+      now: () => time,
+      sleep: async (milliseconds) => {
+        time += milliseconds;
+      },
+    });
+    await limiter.waitForSlot();
+    const waiting = limiter.waitForSlot();
+    limiter.deferFor(2000);
+    await waiting;
+    expect(time).toBe(2000);
+  });
 });

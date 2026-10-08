@@ -1,11 +1,13 @@
 import type { Logger } from 'pino';
-import { EnrichmentClientError, type EnrichmentClient } from '../clients/enrichment-client.js';
+import type { EnrichmentClient } from '../clients/enrichment-client.js';
 import type { ClaimedStore, EnrichmentMetrics } from '../domain/enrichment.js';
+import { EnrichmentAttemptError } from '../errors/enrichment-error.js';
 import type {
   AttemptFailure,
   EnrichmentRepository,
 } from '../repositories/enrichment-repository.js';
 import type { RequestStartLimiter } from './rate-limiter.js';
+import { computeBackoffDelayMs } from './retry-policy.js';
 
 interface WorkerDependencies {
   jobId: string;
@@ -14,29 +16,68 @@ interface WorkerDependencies {
   client: EnrichmentClient;
   rateLimiter: RequestStartLimiter;
   leaseDurationMs: number;
+  retryBaseDelayMs: number;
+  retryMaxDelayMs: number;
+  random?: () => number;
   logger: Logger;
 }
 
-function describeFailure(error: unknown): AttemptFailure & { status?: number } {
-  if (error instanceof EnrichmentClientError) {
-    return {
-      code: error.code,
-      message: error.message.slice(0, 1000),
-      ...(error.status !== undefined ? { status: error.status } : {}),
-    };
+function describeFailure(error: unknown): EnrichmentAttemptError {
+  if (error instanceof EnrichmentAttemptError) {
+    return error;
   }
-  return { code: 'ENRICHMENT_UNEXPECTED_ERROR', message: 'Unexpected enrichment failure.' };
+  return new EnrichmentAttemptError({
+    code: 'NETWORK_ERROR',
+    message: 'Unexpected enrichment transport failure.',
+    retryable: true,
+  });
 }
 
-function correlation(claim: ClaimedStore) {
+function persistedFailure(error: EnrichmentAttemptError): AttemptFailure {
   return {
-    jobId: claim.jobId,
-    storeId: claim.storeId,
-    attemptCount: claim.attemptCount,
-    leaseToken: claim.leaseToken,
+    code: error.code,
+    message: error.message.slice(0, 1000),
   };
 }
 
+function exhaustedFailure(error: EnrichmentAttemptError, attempts: number): AttemptFailure {
+  return {
+    code: 'RETRY_EXHAUSTED',
+    message: (
+      `Retry attempts exhausted after ${attempts} attempts. ` +
+      `Last error: ${error.code} - ${error.message}`
+    ).slice(0, 1000),
+  };
+}
+
+function retryDelay(
+  error: EnrichmentAttemptError,
+  claim: ClaimedStore,
+  dependencies: WorkerDependencies,
+) {
+  const backoff = computeBackoffDelayMs({
+    attemptNumber: claim.attemptCount,
+    baseDelayMs: dependencies.retryBaseDelayMs,
+    maxDelayMs: dependencies.retryMaxDelayMs,
+    ...(dependencies.random ? { random: dependencies.random } : {}),
+  });
+  return Math.max(backoff, error.retryAfterMs ?? 0);
+}
+
+function errorLog(error: EnrichmentAttemptError) {
+  return {
+    code: error.code,
+    status: error.status,
+    retryable: error.retryable,
+    retryAfterMs: error.retryAfterMs,
+  };
+}
+
+/*
+ * Attempts execute outside database transactions. The current token is checked
+ * again by every persistence path, so a timed-out request can settle late without
+ * obtaining permission to change durable state.
+ */
 export async function runWorker(dependencies: WorkerDependencies): Promise<void> {
   const { jobId, workerId, repository, client, rateLimiter, leaseDurationMs, logger } =
     dependencies;
@@ -49,15 +90,33 @@ export async function runWorker(dependencies: WorkerDependencies): Promise<void>
       await rateLimiter.waitForSlot();
       logger.info({ workerId, ...correlation(claim) }, 'Enrichment attempt started');
       metrics = await client.enrich(claim);
-    } catch (error) {
-      const failure = describeFailure(error);
+    } catch (cause) {
+      const error = describeFailure(cause);
+      if (error.retryAfterMs !== undefined) {
+        rateLimiter.deferFor(error.retryAfterMs);
+      }
       logger.warn(
-        { workerId, ...correlation(claim), code: failure.code, status: failure.status },
+        { workerId, ...correlation(claim), ...errorLog(error) },
         'Enrichment attempt failed',
       );
-      const accepted = await repository.failStore(claim, failure);
-      if (!accepted) {
+      const canRetry = error.retryable && claim.attemptCount < claim.maxAttempts;
+      const failure = canRetry
+        ? persistedFailure(error)
+        : error.retryable
+          ? exhaustedFailure(error, claim.attemptCount)
+          : persistedFailure(error);
+      const result = await repository.recordAttemptFailure(
+        claim,
+        failure,
+        canRetry ? retryDelay(error, claim, dependencies) : null,
+      );
+      if (result.disposition === 'stale') {
         logger.warn({ workerId, ...correlation(claim) }, 'Stale enrichment failure discarded');
+      } else if (result.disposition === 'retry_wait') {
+        logger.info(
+          { workerId, ...correlation(claim), nextAttemptAt: result.nextAttemptAt },
+          'Enrichment retry scheduled',
+        );
       }
       continue;
     }
@@ -68,4 +127,13 @@ export async function runWorker(dependencies: WorkerDependencies): Promise<void>
       logger.warn({ workerId, ...correlation(claim) }, 'Stale enrichment result discarded');
     }
   }
+}
+
+function correlation(claim: ClaimedStore) {
+  return {
+    jobId: claim.jobId,
+    storeId: claim.storeId,
+    attemptCount: claim.attemptCount,
+    leaseToken: claim.leaseToken,
+  };
 }

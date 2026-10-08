@@ -2,6 +2,7 @@ import { performance } from 'node:perf_hooks';
 
 export interface RequestStartLimiter {
   waitForSlot(): Promise<void>;
+  deferFor(milliseconds: number): void;
 }
 
 interface RateLimiterOptions {
@@ -22,6 +23,9 @@ export function createRateLimiter(options: RateLimiterOptions): RequestStartLimi
   let admission = Promise.resolve();
 
   return {
+    deferFor(milliseconds) {
+      nextStartAt = Math.max(nextStartAt, now() + Math.max(0, milliseconds));
+    },
     waitForSlot() {
       const slot = admission.then(async () => {
         const delay = Math.max(0, nextStartAt - now());

@@ -48,17 +48,34 @@ describe('enrichment client', () => {
     });
   });
 
-  it('distinguishes HTTP failures and retains the response status', async () => {
+  it('classifies 429 and parses Retry-After as a retry lower bound', async () => {
     const client = createEnrichmentClient({
       baseUrl: 'http://127.0.0.1:8000/',
       timeoutMs: 1000,
-      fetch: vi.fn<typeof fetch>().mockResolvedValue(new Response('busy', { status: 429 })),
+      fetch: vi
+        .fn<typeof fetch>()
+        .mockResolvedValue(new Response('busy', { status: 429, headers: { 'retry-after': '2' } })),
     });
     await expect(client.enrich(store)).rejects.toMatchObject({
-      kind: 'http',
-      code: 'ENRICHMENT_HTTP_ERROR',
+      code: 'RATE_LIMITED',
+      retryable: true,
       status: 429,
+      retryAfterMs: 2000,
     });
+  });
+
+  it.each([
+    [500, 'PROVIDER_ERROR', true],
+    [503, 'PROVIDER_ERROR', true],
+    [400, 'PERMANENT_ERROR', false],
+    [404, 'PERMANENT_ERROR', false],
+  ] as const)('classifies HTTP %i as %s', async (status, code, retryable) => {
+    const client = createEnrichmentClient({
+      baseUrl: 'http://127.0.0.1:8000',
+      timeoutMs: 1000,
+      fetch: vi.fn<typeof fetch>().mockResolvedValue(new Response('failure', { status })),
+    });
+    await expect(client.enrich(store)).rejects.toMatchObject({ code, retryable, status });
   });
 
   it.each([
@@ -92,8 +109,8 @@ describe('enrichment client', () => {
       ),
     });
     await expect(client.enrich(store)).rejects.toMatchObject({
-      kind: 'invalid_response',
-      code: 'ENRICHMENT_INVALID_RESPONSE',
+      code: 'INVALID_RESPONSE',
+      retryable: false,
     });
   });
 
@@ -104,8 +121,8 @@ describe('enrichment client', () => {
       fetch: vi.fn<typeof fetch>().mockRejectedValue(new Error('private transport detail')),
     });
     await expect(client.enrich(store)).rejects.toMatchObject({
-      kind: 'transport',
-      code: 'ENRICHMENT_TRANSPORT_ERROR',
+      code: 'NETWORK_ERROR',
+      retryable: true,
       message: 'Enrichment request failed.',
     });
   });
@@ -125,8 +142,36 @@ describe('enrichment client', () => {
       fetch: fetcher,
     });
     await expect(client.enrich(store)).rejects.toMatchObject({
-      kind: 'transport',
-      code: 'ENRICHMENT_TIMEOUT',
+      code: 'TIMEOUT',
+      retryable: true,
     });
+  });
+
+  it('releases the logical worker deadline even when the transport ignores abort', async () => {
+    let resolveLate!: (response: Response) => void;
+    const fetcher = vi.fn<typeof fetch>().mockImplementation(
+      () =>
+        new Promise<Response>((resolve) => {
+          resolveLate = resolve;
+        }),
+    );
+    const client = createEnrichmentClient({
+      baseUrl: 'http://127.0.0.1:8000',
+      timeoutMs: 5,
+      fetch: fetcher,
+    });
+    await expect(client.enrich(store)).rejects.toMatchObject({ code: 'TIMEOUT' });
+    resolveLate(
+      new Response(
+        JSON.stringify({
+          store_id: store.storeId,
+          estimated_monthly_footfall: 1,
+          estimated_monthly_revenue: 2,
+          store_size_sqft: 3,
+        }),
+        { status: 200 },
+      ),
+    );
+    await new Promise((resolve) => setImmediate(resolve));
   });
 });
