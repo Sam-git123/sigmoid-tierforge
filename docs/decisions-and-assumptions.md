@@ -1,6 +1,6 @@
 # Decisions and assumptions — Phase 0
 
-These record implementation choices, not original assignment requirements. Phases 1 and 2 now implement the foundation and queued CSV ingestion; [current schema](database-schema.md), [CSV policy](csv-ingestion.md), and the verification reports record evidence. Remaining worker/scoring/UI policies are still proposals. Sources are the [assignment](requirements/tierforge-requirements.md), [supplied simulator README](../enrichment_simulator/README.md), and the user's phase briefs. The assignment's exact score formula, five-request/second global limit, required resilience, and core/bonus boundary are not configurable product reinterpretations.
+These record implementation choices, not original assignment requirements. Phases 1–3 implement the foundation, queued CSV ingestion, and basic enrichment engine; [current schema](database-schema.md), [CSV policy](csv-ingestion.md), [enrichment policy](enrichment-engine.md), and verification reports record evidence. Remaining resilience/scoring/UI policies are proposals. Sources are the [assignment](requirements/tierforge-requirements.md), [supplied simulator README](../enrichment_simulator/README.md), and the user's phase briefs.
 
 ## Authority and repository placement
 
@@ -10,7 +10,7 @@ These record implementation choices, not original assignment requirements. Phase
 
 ## Worker and resilience defaults
 
-**D03 — Process topology and concurrency.** One Node process hosts API and background worker, with `WORKER_CONCURRENCY=5` logical request slots and one limiter shared by every attempt. This permits useful overlap without tying concurrency to the much larger store count. Increasing slots is possible after latency measurements, but never raises the five-request/second ceiling. Development reload must not leave duplicate worker processes. Five slots may underutilize the request budget when latency is high; correctness takes priority over peak throughput.
+**D03 — Process topology and concurrency.** One Node process hosts API and background workers, with `WORKER_CONCURRENCY=6` logical loops and one limiter shared by every attempt. The monotonic limiter spaces starts by 220 ms, so concurrency does not redefine the five-request/second ceiling. Development reload must not leave duplicate worker processes; the guarantee is process-wide, matching the core single-process design.
 
 **D04 — Rate admission.** `ENRICHMENT_MAX_RPS=5` (validate at most five; lowering is allowed), `MIN_DISPATCH_INTERVAL_MS=210` at the default ceiling, plus a trailing-window admission check and no burst accumulation. Derive a larger interval when lowering max RPS. Admission occurs immediately before each HTTP dispatch, including retries; reevaluate after scheduler pauses. Use monotonic elapsed time. The core guarantee covers this application's one process. Other simulator clients can consume quota; handle 429 without assuming the local limiter controls them.
 
@@ -67,7 +67,7 @@ The README supplies example payloads but does not fully specify all validation/e
 2. **Validation contract:** required-vs-optional fields, nullability, field length restrictions, strict numeric ranges/types, unknown-field behavior, validation response status/body, and content-type errors are not fully stated. Use boundary validation and handle unexpected non-429 4xx explicitly; do not invent an error schema.
 3. **429 details:** `Retry-After` presence/format, response body, and exact quota-window algorithm/boundaries are undocumented. Design independent conservative request admission and generic header handling; verify with a modest integration smoke test.
 4. **Error and latency details:** 500 body, non-delayed latency distribution, connection behavior after client abort, and whether a delayed request continues after disconnect are unverified. A late-result test must not rely solely on abort cancelling the server.
-5. **Transport/base URL:** README command suggests local port 8000. Propose configurable `ENRICHMENT_BASE_URL=http://127.0.0.1:8000` for host-run Node. Container-to-host naming and any future proxy configuration need explicit setup verification. The browser calls Express, not the simulator, so upstream CORS is irrelevant to the intended flow.
+5. **Transport/base URL:** README command uses local port 8000. Phase 3 uses configurable `ENRICHMENT_API_BASE_URL=http://127.0.0.1:8000` for host-run Node. Container-to-host naming and any future proxy configuration need explicit setup verification. The browser calls Express, not the simulator, so upstream CORS is irrelevant to the intended flow.
 6. **Sample generator:** `stores_5000.csv` and `tierforge-use-case.rtf` are present; the separately mentioned generator script was not found in the supplied repository. Preserve available assets; request the original if needed for final submission, and disclose its absence if unavailable. Do not author a substitute and label it Sigmoid-provided.
 7. **Runtime compatibility:** No simulator, database, Node application, dependencies, or test suite was started in Phase 0. Documented behavior is not execution evidence. Package versions and exact future startup/test scripts remain Phase 1/5 work.
 
@@ -80,3 +80,7 @@ The latest user request selects composite store keys and the five domain tables 
 ## Phase 2 amendments
 
 Phase 2 implements D12 and D13 through `csv-parse` and Multer. All six assignment columns are required and nonblank because each maps to a nonnullable persisted field and later enrichment input. Extra columns are ignored with an explicit warning; their header positions still count when validating row width. Files are UTF-8, at most 10 MiB and 10,000 records by default, with 65,536 characters per CSV record and at most 100 returned validation details. The entire bounded file is validated before database work, then inserted in 500-row batches within one transaction. The database partial unique index remains authoritative for simultaneous active-job submissions.
+
+## Phase 3 amendments
+
+Phase 3 implements the documented five-field simulator request, validated successful responses, a six-loop worker pool, a shared 220 ms monotonic limiter, job-before-store locking, `SKIP LOCKED` claims, UUID leases, and fenced atomic success persistence. Upload notification uses `setImmediate`, so the `202` response never waits for enrichment. At startup the coordinator detects one queued or running job, but full restart recovery is not claimed. To avoid crashes or infinite loops before retry design is authorized, HTTP, transport, timeout, and contract errors become terminal per-store failures with safe codes; retry wait, lease reaping, backoff, and systemic failure are deferred.

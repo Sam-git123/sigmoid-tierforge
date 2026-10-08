@@ -1,11 +1,15 @@
 import { createApp } from './app.js';
+import { createEnrichmentClient } from './clients/enrichment-client.js';
 import { parseEnvironment } from './config/env.js';
 import { loadEnvironmentFile } from './config/load-env.js';
 import { createDatabasePool } from './db/pool.js';
 import { createLogger } from './logging/logger.js';
 import { createHealthRepository } from './repositories/health-repository.js';
+import { createEnrichmentRepository } from './repositories/enrichment-repository.js';
 import { createJobRepository } from './repositories/job-repository.js';
 import { createJobService } from './services/job-service.js';
+import { createCoordinator } from './workers/coordinator.js';
+import { createRateLimiter } from './workers/rate-limiter.js';
 
 async function start(): Promise<void> {
   loadEnvironmentFile();
@@ -22,25 +26,50 @@ async function start(): Promise<void> {
     return;
   }
 
-  const jobService = createJobService(createJobRepository(pool), {
-    maxBytes: env.CSV_MAX_BYTES,
-    maxRows: env.CSV_MAX_ROWS,
-    maxAttempts: env.MAX_ATTEMPTS,
+  const enrichmentRepository = createEnrichmentRepository(pool);
+  const coordinator = createCoordinator({
+    repository: enrichmentRepository,
+    client: createEnrichmentClient({
+      baseUrl: env.ENRICHMENT_API_BASE_URL,
+      timeoutMs: env.ENRICHMENT_TIMEOUT_MS,
+    }),
+    rateLimiter: createRateLimiter({ minimumIntervalMs: env.MIN_DISPATCH_INTERVAL_MS }),
+    logger,
+    concurrency: env.WORKER_CONCURRENCY,
+    leaseDurationMs: env.LEASE_DURATION_MS,
   });
+  const jobService = createJobService(
+    createJobRepository(pool),
+    {
+      maxBytes: env.CSV_MAX_BYTES,
+      maxRows: env.CSV_MAX_ROWS,
+      maxAttempts: env.MAX_ATTEMPTS,
+    },
+    coordinator,
+  );
   const app = createApp({
     logger,
     checkDatabase: repository.checkDatabase,
     jobService,
     csvMaxBytes: env.CSV_MAX_BYTES,
   });
+  try {
+    await coordinator.start();
+  } catch (error) {
+    await pool.end();
+    throw error;
+  }
   const server = app.listen(env.API_PORT, '127.0.0.1', () => {
     logger.info({ port: env.API_PORT }, 'TierForge API listening');
   });
   server.on('error', () => {
     logger.fatal({ code: 'LISTEN_FAILED' }, 'API listener failed');
-    void pool.end().finally(() => {
-      process.exitCode = 1;
-    });
+    void coordinator
+      .stop()
+      .finally(() => pool.end())
+      .finally(() => {
+        process.exitCode = 1;
+      });
   });
 
   let stopping = false;
@@ -51,12 +80,13 @@ async function start(): Promise<void> {
     const deadline = setTimeout(() => {
       logger.error({ code: 'SHUTDOWN_TIMEOUT' }, 'Shutdown deadline exceeded');
       process.exit(1);
-    }, 10_000);
+    }, env.ENRICHMENT_TIMEOUT_MS + 5_000);
     deadline.unref();
     server.close(() => {
-      void pool.end().finally(() => {
-        clearTimeout(deadline);
-      });
+      void coordinator
+        .stop()
+        .finally(() => pool.end())
+        .finally(() => clearTimeout(deadline));
     });
   }
   process.once('SIGINT', () => shutdown('SIGINT'));

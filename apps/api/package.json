@@ -9,7 +9,7 @@
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:db": "tsx tests/require-test-database.ts \u0026\u0026 vitest run tests/database.test.ts tests/jobs.database.test.ts",
+    "test:db": "tsx tests/require-test-database.ts \u0026\u0026 vitest run tests/database.test.ts tests/jobs.database.test.ts tests/enrichment.database.test.ts",
     "db:migrate": "tsx src/db/migrate-cli.ts"
   },
   "dependencies": {

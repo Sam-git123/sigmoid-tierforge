@@ -53,6 +53,30 @@ describe('job service boundaries', () => {
     );
     expect(result.statusUrl).toBe('/api/jobs/created-id');
   });
+  it('notifies the background coordinator only after durable creation', async () => {
+    const { repository } = setup();
+    vi.mocked(repository.createJobWithStores).mockResolvedValue({
+      jobId: 'created-id',
+      status: 'queued',
+      totalStores: 1,
+      createdAt: new Date(),
+      startedAt: null,
+      finishedAt: null,
+      failureCode: null,
+      failureReason: null,
+    });
+    const starter = { notifyJobCreated: vi.fn() };
+    const service = createJobService(
+      repository,
+      { maxBytes: 10000, maxRows: 100, maxAttempts: 4 },
+      starter,
+    );
+    await service.createJob(csv);
+    expect(starter.notifyJobCreated).toHaveBeenCalledWith('created-id');
+    expect(vi.mocked(repository.createJobWithStores).mock.invocationCallOrder[0]!).toBeLessThan(
+      starter.notifyJobCreated.mock.invocationCallOrder[0]!,
+    );
+  });
   it('handles a conflict even if the winning job finishes before lookup', async () => {
     const { repository, service } = setup();
     vi.mocked(repository.createJobWithStores).mockRejectedValue(new ActiveJobConflict());

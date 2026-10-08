@@ -23,9 +23,9 @@ const envSchema = z
     CSV_MAX_BYTES: positiveInt(10_485_760).pipe(z.number().max(52_428_800)),
     CSV_MAX_ROWS: positiveInt(10_000).pipe(z.number().max(100_000)),
     ENRICHMENT_API_BASE_URL: httpUrl.default('http://127.0.0.1:8000'),
-    WORKER_CONCURRENCY: positiveInt(5).pipe(z.number().max(100)),
+    WORKER_CONCURRENCY: positiveInt(6).pipe(z.number().max(100)),
     ENRICHMENT_MAX_RPS: positiveInt(5).pipe(z.number().max(5)),
-    MIN_DISPATCH_INTERVAL_MS: positiveInt(210),
+    MIN_DISPATCH_INTERVAL_MS: positiveInt(220),
     ENRICHMENT_TIMEOUT_MS: positiveInt(10000),
     MAX_ATTEMPTS: positiveInt(6),
     LEASE_DURATION_MS: positiveInt(20000),
@@ -50,7 +50,7 @@ const envSchema = z
         message: 'Must be at least RETRY_BASE_MS',
       });
     }
-    if (env.MIN_DISPATCH_INTERVAL_MS < Math.ceil(1000 / env.ENRICHMENT_MAX_RPS)) {
+    if (env.MIN_DISPATCH_INTERVAL_MS <= 1000 / env.ENRICHMENT_MAX_RPS) {
       context.addIssue({
         code: 'custom',
         path: ['MIN_DISPATCH_INTERVAL_MS'],

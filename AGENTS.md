@@ -10,7 +10,7 @@ The requirements were copied unchanged from `enrichment_simulator/docs/requireme
 
 ## Phase and scope
 
-Implement **only the phase explicitly requested by the user**. The current authorized phase is **Phase 2: CSV ingestion, validation, and queued job creation only**. Implement `POST /api/jobs`, `GET /api/jobs/:jobId`, atomic job/store persistence, and their tests. Do not implement enrichment calls, workers, scoring calculations, or dashboard functionality; later phases require a subsequent request.
+Implement **only the phase explicitly requested by the user**. The current authorized phase is **Phase 3: basic enrichment engine, simulator client, shared rate limiter, and worker pool**. Implement asynchronous queued-job startup, atomic pending-work claims, fenced success persistence, and safe terminal placeholder failure handling. Do not implement retry scheduling, lease reclamation, systemic-failure policy, scoring calculations, or dashboard functionality; later phases require a subsequent request.
 Prioritize one active enrichment job and the complete core workflow. Multiple concurrent jobs and full restart resumability are assignment bonuses. Do not add authentication, microservices, Redis, BullMQ, Kafka, Kubernetes, or distributed rate limiting to core scope.
 Never automatically stage, commit, push, or publish changes. A suggested commit message is informational only.
 
@@ -48,4 +48,8 @@ The user's Phase 1 schema replaces the Phase 0 proposal. Read `docs/database-sch
 
 ## Phase 2 ingestion policy
 
-Read `docs/csv-ingestion.md` before changing uploads. CSV headers are case-sensitive after trimming and may be reordered. All six required values must be nonblank. Store IDs are trimmed, case-sensitive, and unique within an upload. Extra columns are ignored with a response warning, while every row must still match the full header width. A valid upload remains queued and performs no enrichment call.
+Read `docs/csv-ingestion.md` before changing uploads. CSV headers are case-sensitive after trimming and may be reordered. All six required values must be nonblank. Store IDs are trimmed, case-sensitive, and unique within an upload. Extra columns are ignored with a response warning, while every row must still match the full header width. The upload transaction creates a queued job and performs no enrichment call; the coordinator starts it asynchronously after commit.
+
+## Phase 3 enrichment policy
+
+Read `docs/enrichment-engine.md` and the unchanged simulator README before changing enrichment. Send exactly the documented five request fields; retain CSV `country` locally. One six-loop in-process pool shares one monotonic 220 ms paced limiter. Claims lock the job before a pending store and commit before limiter/network waits. Successes require a running job, current processing state, matching token, and unexpired lease. Phase 3 records API/transport/contract failures as terminal store failures; retry scheduling and expired-lease recovery remain explicitly deferred.

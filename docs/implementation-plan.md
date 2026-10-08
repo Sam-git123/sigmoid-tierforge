@@ -1,6 +1,6 @@
 # TierForge implementation plan — Phase 0
 
-Phases 0 and 1 are complete, and Phase 2 CSV ingestion and queued job creation are implemented. Only Phase 2 is currently authorized; later phases remain a plan. See the [Phase 1](phase-1-report.md) and [Phase 2](phase-2-report.md) verification reports. The user-specified Phase 1 schema overrides the earlier proposal; see [current schema](database-schema.md). Checkboxes below remain unchecked until implementation evidence exists; writing a design does not satisfy a runtime requirement.
+Phases 0–3 are implemented through the basic enrichment engine authorized for Phase 3. Advanced retries/recovery, scoring, and dashboard work remain plans requiring later requests. See the Phase 1–3 verification reports and [current schema](database-schema.md). Checkboxes remain unchecked until the complete requirement has implementation evidence; a deliberately partial Phase 3 resilience step does not claim later behavior.
 
 Sources: [complete original assignment](requirements/tierforge-requirements.md), [simulator README](../enrichment_simulator/README.md), and the user's Phase 0 brief. See [architecture](architecture.md) for flow/transaction details and [decisions](decisions-and-assumptions.md) for chosen defaults. `R` identifies assignment core requirements, `Q` evaluation/quality criteria, `U` user-directed constraints, `B` assignment bonuses, and `D` implementation choices. Phase references connect each item to planned acceptance evidence.
 
@@ -24,8 +24,8 @@ Sources: [complete original assignment](requirements/tierforge-requirements.md),
 
 ### Enrichment — Section 4, Step 2
 
-- [ ] **R07:** Submission creates a job that enriches each store using the external `POST /enrich` contract. Evidence: Phases 2/3; one persisted work row per accepted store, asynchronous `202` response.
-- [ ] **R08:** Persist `estimated_monthly_footfall`, `estimated_monthly_revenue`, and `store_size_sqft` for accepted successes. Evidence: Phase 3 response validation and raw-result persistence tests.
+- [x] **R07:** Submission creates a job that enriches each store using the external `POST /enrich` contract. Evidence: Phases 2/3; one persisted work row per accepted store, asynchronous `202` response, and coordinator integration test.
+- [x] **R08:** Persist `estimated_monthly_footfall`, `estimated_monthly_revenue`, and `store_size_sqft` for accepted successes. Evidence: Phase 3 response validation and fenced PostgreSQL persistence tests.
 - [ ] **R09:** Track succeeded, failed, and pending work; expose job progress and final per-store reasons. Evidence: Phases 3/5 count invariants, partial-success and failure views.
 
 ### Scoring — Section 4, Step 3
@@ -79,11 +79,11 @@ Sources: [complete original assignment](requirements/tierforge-requirements.md),
 - [ ] **U01:** React/TypeScript/Vite, Tailwind, TanStack Query, Node/TypeScript/Express, PostgreSQL/`pg`, Zod, Vitest/Supertest, pnpm workspaces, Docker Compose PostgreSQL. Phase 1 scaffold/build acceptance.
 - [ ] **U02:** One store per persisted work unit; asynchronous enrichment; durable processing, retry, success, and failure states. Phases 2/3 state and persistence tests.
 - [ ] **U03:** PostgreSQL queue, atomic `FOR UPDATE SKIP LOCKED` claim, lease tokens, concurrency-safe DB transitions, bounded retries with exponential backoff/jitter, timeout/network handling. Phase 3 real DB tests.
-- [ ] **U04:** One process-wide limiter including retries and a background worker module, without extra queue infrastructure. Phase 3 limiter tests and topology review.
+- [x] **U04:** One process-wide limiter used by the background worker module without extra queue infrastructure. Phase 3 proves all current attempts share it; later retries must use the same instance.
 - [ ] **U05:** Separate raw enrichment from scores and enrichment module from scoring; set-based bulk scoring. Phase 4 dependency/SQL review and zero-network test.
 - [ ] **U06:** Polling dashboard; no authentication or infrastructure expansion. Phase 5 behavior/scope review.
 - [ ] **U07:** Phase 0 creates project guidance, architecture with three Mermaid diagrams, traceable plan, and explicit decisions/assumptions; no application implementation, package installation, or commits. Phase 0 document verification.
-- [ ] **Q05:** Progress remains responsive while enrichment runs; upload HTTP request does not wait on remote work. Phase 2/5 measurement and API smoke check.
+- [x] **Q05:** Progress remains responsive while enrichment runs; upload HTTP request does not wait on remote work. Phase 3 controlled-client integration test holds enrichment open after the `202` response.
 - [ ] **Q06:** Bounded memory, no whole-job fan-out, bounded connection usage, no network waits inside DB transactions. Phases 2/3 limits and concurrency review.
 - [ ] **Q07:** Exact numeric scoring and atomic revision visibility. Phase 4 database precision and transaction tests.
 - [ ] **Q08:** Configurable operational defaults, structured actionable errors/logs, no false success reports. Phases 1/3/5 environment validation and failure walkthrough.
@@ -144,7 +144,7 @@ Error envelope: `{error: {code, message, details?, requestId}}`. Invalid multipa
 
 ## Proposed folder structure
 
-This tree is a future layout; Phase 0 creates only documentation and root guidance.
+This tree began as the Phase 0 target layout. The foundation, ingestion, client, repositories, and worker modules through Phase 3 now exist; scoring and dashboard portions remain planned.
 
 ```text
 sigmoid-tierforge/
@@ -216,7 +216,7 @@ Acceptance:
 - Constraints reject duplicate store IDs per job, second active job, cross-job score links, invalid weights, and invalid lease/state combinations.
 - Modules import cleanly; server startup is separate from constructing the Express app for tests; simulator remains unchanged. Covers U01 and Q01 foundations.
 
-### Phase 2 — CSV intake and durable job API (current authorized phase, implemented)
+### Phase 2 — CSV intake and durable job API (implemented)
 
 Implement bounded CSV parser, whole-file validation, transactional job/work creation, progress/store queries, and a basic upload UI.
 
@@ -227,18 +227,19 @@ Acceptance:
 - Two simultaneous valid submissions yield one active job and one `409`; every accepted store has exactly one persisted pending row.
 - Progress obeys count invariants. DB errors roll back import. Covers R04–R07, R25, U02, Q05/Q06.
 
-### Phase 3 — Resilient enrichment engine (6 hours; future, highest risk)
+### Phase 3 — Basic enrichment engine (implemented)
 
-Implement queue claims, process-wide limiter, client integration, attempt history, timeout/retry logic, lease reaper, fencing, systemic failure, and terminal-state handling.
+Implemented the documented simulator client, validated success payloads, one process-wide 220 ms paced limiter, six fixed worker loops, atomic pending claims, UUID leases, fenced metric persistence, queued-job notification, startup discovery, and terminal placeholder failure handling.
 
-Acceptance:
+Evidence:
 
-- Deterministic scenarios prove normal success, 500/network/429 retry, exhausted budget, malformed 200, and nonretryable 4xx handling.
-- Dispatch logs prove no sixth request within a trailing second and no catch-up bursts, across first attempts and retries; local concurrent logical requests never exceed five.
-- Independent DB connections claim disjoint work; silent attempts are reclaimed without waiting for the original handler. Late success/failure from token A cannot change token B's accepted state, metrics, scores, counters, or outcome.
-- Reaper/completion races and duplicate callbacks yield one accepted result and accurate counts. No transaction is held across network waits or sleeps.
-- All-failing jobs of sizes 1, 5, and 100 terminate with reasons; 30-failure systemic stop fences all outstanding work; partial successes remain readable. Simulated DB loss stops dispatch and resumes safe lease cleanup after recovery.
-- Real supplied simulator smoke run validates actual request/response compatibility; preserve simulator source. Covers R08/R09, R20–R28, U03/U04 and Q02/Q06/Q08.
+- Controlled-client tests cover documented request fields, response validation, HTTP/transport classification, fixed-loop processing, and prompt upload response.
+- A 20-caller deterministic limiter test proves every adjacent start is at least 220 ms apart and every sixth start is more than one second after the first.
+- PostgreSQL tests prove two concurrent claims cannot own one row, stale/expired tokens cannot write, success and metrics commit together, and duplicate completion creates one result.
+- No transaction spans limiter waiting or HTTP work. The existing schema supports Phase 3, so no migration was added.
+- The supplied simulator remains unchanged. Its smoke test was unavailable because this environment has no Python interpreter; this is reported rather than simulated.
+
+Advanced 429/500 retry, persisted backoff, lease reaping, late-response races, attempt history, and systemic-failure termination remain unchecked requirements for the next resilience phase.
 
 ### Phase 4 — Scoring configuration and recalculation (3.5 hours; future)
 

@@ -1,6 +1,6 @@
 # TierForge
 
-Phase 2 implementation for Sigmoid's resilient bulk store scoring/tiering exercise. Implemented: pnpm workspace, React shell, Express health API, PostgreSQL schema/migrations, bounded CSV validation, atomic queued job creation, and persisted job progress. Enrichment workers, scoring execution, and dashboard screens are intentionally **not implemented**.
+Phase 3 implementation for Sigmoid's resilient bulk store scoring/tiering exercise. Implemented: pnpm workspace, React shell, Express health/job API, PostgreSQL schema/migrations, bounded CSV ingestion, asynchronous enrichment workers, a shared five-per-second request limiter, lease-fenced persistence, and persisted job progress. Scoring, the dashboard, and advanced retry/recovery behavior are intentionally **not implemented**.
 
 ## Prerequisites
 
@@ -32,7 +32,7 @@ On macOS/Linux, use `cp .env.example .env` instead. Never commit `.env`.
 - Both apps load the root `.env`; shell environment variables take precedence.
 - `VITE_API_BASE_URL=/api` uses the Vite development proxy. Production hosting must route same-origin `/api` to Express. Phase 1 does not add cross-origin deployment configuration.
 
-The health endpoint returns `200 {"status":"ok","database":"up"}` when a real database query succeeds, or a standard `503 DATABASE_UNAVAILABLE` error otherwise. Startup fails clearly if PostgreSQL cannot be reached. Importing the application factory starts no listeners, pools, or workers.
+The health endpoint returns `200 {"status":"ok","database":"up"}` when a real database query succeeds, or a standard `503 DATABASE_UNAVAILABLE` error otherwise. Startup fails clearly if PostgreSQL cannot be reached. Importing the application factory starts no listeners, pools, or workers; `server.ts` owns the coordinator lifecycle.
 
 ## Job API
 
@@ -86,7 +86,7 @@ curl.exe http://127.0.0.1:3001/api/jobs/45dbdc13-56f4-4921-9f70-ad8ad9d69c63
 }
 ```
 
-The [CSV contract](docs/csv-ingestion.md) documents header/value policy, limits, warnings, status codes, and transaction behavior. Jobs remain queued until Phase 3 supplies a coordinator. A queued or running job causes `409 ACTIVE_JOB_EXISTS`; historical terminal jobs remain available.
+The [CSV contract](docs/csv-ingestion.md) documents header/value policy, limits, warnings, status codes, and transaction behavior. The response reflects the committed queued record, then the coordinator starts it asynchronously. A queued or running job causes `409 ACTIVE_JOB_EXISTS`; historical terminal jobs remain available.
 
 ## Commands
 
@@ -119,24 +119,24 @@ Five domain tables: `jobs`, `job_stores`, `store_enrichments`, `scoring_configs`
 
 Migrations are ordered, forward-only SQL files in `apps/api/migrations/`. A PostgreSQL advisory lock serializes migration runners; each file and its ledger insert commit in one transaction. Never edit an applied migration: add a new numbered file. Failed DDL rolls back; changed/missing applied files cause failure. The CLI uses bounded pool/statement timeouts. Keep the migrations directory alongside the API source/build when distributing the backend.
 
-The one-active-job constraint covers both `queued` and `running`. Exact NUMERIC metrics/configuration/scores and composite foreign keys preserve store/job/revision identity. Constraint validation does not implement scoring or worker behavior.
+The one-active-job constraint covers both `queued` and `running`. Exact NUMERIC metrics/configuration/scores and composite foreign keys preserve store/job/revision identity. Phase 3 uses the original schema without a migration: existing lease columns fence work and `store_enrichments` stores accepted metrics.
 
 ## Architecture and boundaries
 
-The API has routes, controllers, services, repositories, database modules, middleware, and a reserved workers directory. Phase 2 keeps CSV parsing in its service, multipart bounds in middleware, transaction SQL in the job repository, and HTTP translation in the controller. The frontend has React Router, TanStack Query, Tailwind's Vite plugin, and a reusable fetch client; no upload screen is part of this phase.
+The API has routes, controllers, services, repositories, database modules, middleware, an enrichment client, and a worker coordinator. Six logical loops share one monotonic limiter, claim one row at a time through `FOR UPDATE SKIP LOCKED`, and never hold a transaction across limiter or network waits. The frontend has React Router, TanStack Query, Tailwind's Vite plugin, and a reusable fetch client; no upload or dashboard screen is part of this phase.
 
-Later phases will implement the remaining [planned architecture](docs/architecture.md), using the [original requirements](docs/requirements/tierforge-requirements.md). The current user-specified schema supersedes the Phase 0 proposal; see the [implementation plan](docs/implementation-plan.md), [Phase 1 verification](docs/phase-1-report.md), and [Phase 2 verification](docs/phase-2-report.md).
+Later phases will implement the remaining [planned architecture](docs/architecture.md), using the [original requirements](docs/requirements/tierforge-requirements.md). See the [implementation plan](docs/implementation-plan.md), [enrichment policy](docs/enrichment-engine.md), and Phase 1–3 verification reports.
 
-## Provided simulator (later integration)
+## Provided simulator
 
-Preserve the supplied service unchanged. Job creation makes no enrichment call, so it is not needed by Phase 2 checks. When Phase 3 integration is implemented, run it in a separate terminal from `enrichment_simulator/`:
+Preserve the supplied service unchanged. Run it in a separate terminal before uploading a CSV:
 
 ```text
 pip install -r requirements.txt
 uvicorn main:app --port 8000
 ```
 
-Its [README](enrichment_simulator/README.md) is the contract authority. `ENRICHMENT_API_BASE_URL` and worker defaults are validated configuration only; no calls or background work exist yet. The supplied `stores_5000.csv` and original RTF are preserved. The referenced generator script was not supplied.
+Its [README](enrichment_simulator/README.md) is the contract authority. The application calls `POST /enrich` through `ENRICHMENT_API_BASE_URL`, omitting `country` exactly as documented. The supplied `stores_5000.csv` and original RTF are preserved. The referenced generator script was not supplied.
 
 ## Local verification fallback in this workspace
 
@@ -161,7 +161,9 @@ This fallback is specific to this workspace, not a portable replacement for Dock
 ## Known limitations
 
 - Docker Compose startup is unverified in this environment; native PostgreSQL tests do not establish container startup.
-- No job claiming, enrichment, retry/lease recovery, scoring calculations, or dashboard is implemented. Created jobs intentionally remain queued.
+- API/transport/timeout/contract failures are terminal store failures in Phase 3. Retry scheduling, backoff, lease recovery, and systemic-failure handling remain for later phases.
+- Restart detection can resume pending rows in an active job, but it does not reclaim rows left processing by a hard stop; full restart resumability is not claimed.
+- No scoring calculations or dashboard are implemented.
 - CSV upload uses bounded in-memory multipart storage (10 MiB by default) and retains validated records until its single creation transaction completes; this is deliberate for the 5,000-row take-home scope.
 - Configuration revisions and score references are schema support only; revision publication/immutability rules belong to a later service layer.
 - Attempt history, raw upstream payload archival, systemic-run state, and restart behavior from the Phase 0 proposal are deferred to later migrations if needed.

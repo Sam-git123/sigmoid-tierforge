@@ -1,6 +1,6 @@
 # TierForge architecture — Phase 0 proposal
 
-Status: Phase 2 CSV ingestion and queued job creation are implemented. Enrichment, scoring, and dashboard flows below remain future design. The user-specified Phase 1 schema supersedes the original table proposal: see [current schema](database-schema.md), [CSV policy](csv-ingestion.md), and the Phase 1/2 verification reports. In particular, job_stores/store_enrichments use composite job/store keys, queued and running share one active slot, and attempt history/raw-payload archival/publication state require later decisions or migrations.
+Status: Phase 3 basic enrichment is implemented alongside the Phase 1 foundation and Phase 2 ingestion flow. The API process starts queued jobs asynchronously, uses a fixed worker pool, one shared paced limiter, PostgreSQL claims, and fenced success persistence. Retry scheduling, expired-lease recovery, systemic-failure handling, scoring, and dashboard flows remain future work. See [current schema](database-schema.md), [CSV policy](csv-ingestion.md), and [enrichment policy](enrichment-engine.md).
 
 ## Authority and scope
 
@@ -93,11 +93,11 @@ Use small claims, up to available local slots; do not reserve thousands of lease
 
 ### Request admission and timeout
 
-Use one process-wide limiter at the HTTP dispatch boundary, shared by initial attempts and retries. Use a monotonic clock, no accumulated burst capacity, at least 210 ms between dispatch starts, and a rolling history that forbids a sixth start in any trailing one-second window. Re-evaluate the clock immediately before dispatch; never pre-allocate future permits that could fire together after an event-loop stall. The 210 ms spacing is a conservative implementation margin, not a changed upstream contract.
+Use one process-wide limiter at the HTTP dispatch boundary, shared by initial attempts and future retries. Use a monotonic clock, no accumulated burst capacity, 220 ms between dispatch starts, and serialized admission that forbids a sixth start in any trailing one-second window. Re-evaluate the clock immediately before dispatch; never pre-allocate future permits that could fire together after an event-loop stall. The 220 ms spacing is a conservative implementation margin, not a changed upstream contract.
 
 Reserve an available concurrency slot, claim one row, then wait for admission without holding database locks. Recheck local cancellation/job-stop signals and lease validity before dispatch; expired claims are not sent. Waiting for admission consumes lease time but not an HTTP timeout. Claiming already consumed the attempt budget. If no work is due, sleep until the nearest retry time or a short poll; do not spin. Backoff is persisted as `next_attempt_at`, so waiting retries hold no slot.
 
-Default logical concurrency is five. The 10-second HTTP deadline starts at dispatch and covers receiving/reading the complete response body. Abort on timeout, settle the logical attempt, and release its slot in `finally`; a transport promise that ignores abort must not retain a logical slot. Late callbacks still pass database fencing. An independent scheduler/reaper continues if a particular attempt handler hangs; complete event-loop/process failure is a separate restart limitation.
+Default logical concurrency is six. The 10-second HTTP deadline starts at dispatch and covers receiving/reading the complete response body. Phase 3 aborts on timeout and records the attempt as a terminal store failure. Future retry/reaper work will reclaim timed-out or expired work and exercise late-callback races; complete event-loop/process failure remains a restart limitation.
 
 The limiter regulates this application's sends, not other callers of the simulator. Do not run another worker process, development duplicate worker, or manual enrichment load alongside it expecting a global guarantee. Normal network timing can still produce a 429, which remains retryable. Health checks are documented as unmetered and are not enrichment attempts.
 
@@ -203,6 +203,6 @@ Return `{error: {code, message, details?, requestId}}` for application HTTP erro
 
 A constant-rate single-process scheduler is sufficient for core and easy to explain; it does not promise cross-process coordination. A job-row lock favors correctness and a short implementation over maximum database parallelism. Bulk scoring briefly delays work persistence; bound statement/lock duration and measure against the 20-second lease. A five-second scoring statement timeout is a proposed safeguard; rollback leaves the prior config intact.
 
-At five requests/second, 5,000 first attempts alone require at least 1,000 seconds (16 minutes 40 seconds), ignoring latency and retries. The proposed 210 ms spacing raises this floor to about 17.5 minutes; concurrency and injected delays may extend it. Do not promise a complete full-sample demonstration in a few minutes. Progress and re-scoring remain independently responsive.
+At five requests/second, 5,000 first attempts alone require at least 1,000 seconds (16 minutes 40 seconds), ignoring latency and retries. The implemented 220 ms spacing raises this floor to about 18 minutes 20 seconds; concurrency and injected delays may extend it. Do not promise a complete full-sample demonstration in a few minutes. Progress and future re-scoring remain independently responsive.
 
 Bounded uploads, stricter row validation, no automatic upload idempotency, interrupted-run termination, and immutable score history are explicit decisions. Authentication, distributed infrastructure, animated UI, and unrequested exports are outside core. The sample generator is missing; README details still needing verification are tracked separately. No runtime simulator behavior has been verified in Phase 0.

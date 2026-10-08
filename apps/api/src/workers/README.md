@@ -1,1 +1,3 @@
-Reserved for the Phase 3 worker. No worker, queue claim, enrichment client, retry scheduler, or lease reaper runs in Phase 2. Jobs created by the upload API remain queued.
+Phase 3 runs a fixed pool of logical worker loops in the API process. Every loop claims one pending row in a short PostgreSQL transaction, releases all locks, waits for the shared request-start limiter, calls the supplied simulator, and writes a fenced result.
+
+The coordinator starts after database readiness, detects an existing active job, and receives a non-blocking notification after each new upload commits. The limiter is process-wide and spaces starts by 220 ms. Phase 3 marks failed calls terminal so the loop remains bounded. Retry scheduling, lease reaping, systemic-run termination, and restart recovery are intentionally deferred.
