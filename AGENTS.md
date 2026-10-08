@@ -10,7 +10,7 @@ The requirements were copied unchanged from `enrichment_simulator/docs/requireme
 
 ## Phase and scope
 
-Implement **only the phase explicitly requested by the user**. The current authorized phase is **Phase 7: read APIs for progress, failures, scoring results, and dashboard statistics**. Implement database-backed, paginated, current-revision read models and consistent validation/errors. Do not implement the React dashboard; it requires a subsequent request.
+Implement **only the phase explicitly requested by the user**. The current authorized phase is **Phase 8: complete React frontend**. Implement the four-step upload, enrichment progress, scoring, and dashboard workflow against real backend APIs. Do not add backend features, deployment infrastructure, or bonus scope.
 Prioritize one active enrichment job and the complete core workflow. Multiple concurrent jobs and full restart resumability are assignment bonuses. Do not add authentication, microservices, Redis, BullMQ, Kafka, Kubernetes, or distributed rate limiting to core scope.
 Never automatically stage, commit, push, or publish changes. A suggested commit message is informational only.
 
@@ -61,3 +61,7 @@ Read the scoring section of `docs/architecture.md` before changing scoring. Acce
 ## Phase 7 read API policy
 
 Read APIs expose camelCase JSON while retaining exact PostgreSQL NUMERIC values as decimal strings. Store and failure pages default to 50 records and cap page size at 100, with stable `store_id` ordering. Tier filtering and filtered totals happen in SQL. Store scores join only the highest committed configuration revision, so historical revisions never duplicate list rows. Missing enrichment and score values remain null. Dashboard counts come from persisted work and current-revision score rows; skipped work is reported separately and unscored work is never classified as Small.
+
+## Phase 8 frontend policy
+
+The browser workflow uses URL-scoped job IDs and TanStack Query for all server state. Poll job progress about every two seconds only while queued/running, then stop. Client CSV and scoring checks provide early feedback but never replace backend validation. Runtime-validate API responses, preserve exact decimal strings until display, and never invent metrics, progress, speed, or ETA values. Tier filters and pagination call the server. Keep loading, error, empty, partial-failure, unscored, and no-success states explicit and accessible.

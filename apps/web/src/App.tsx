@@ -1,32 +1,22 @@
-import { Link, Outlet, Route, Routes } from 'react-router';
+import { Link, Route, Routes } from 'react-router';
+import { AppShell } from './components/app-shell';
+import { DashboardPage } from './pages/dashboard-page';
+import { ProgressPage } from './pages/progress-page';
+import { ScoringPage } from './pages/scoring-page';
+import { UploadPage } from './pages/upload-page';
 
-function AppShell() {
+function NotFoundPage() {
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900">
-      <header className="border-b border-slate-200 bg-white">
-        <div className="mx-auto max-w-5xl px-6 py-5">
-          <Link to="/" className="text-lg font-semibold tracking-tight">
-            TierForge
-          </Link>
-        </div>
-      </header>
-      <main className="mx-auto max-w-5xl px-6 py-16">
-        <Outlet />
-      </main>
-    </div>
-  );
-}
-
-function HomePage() {
-  return (
-    <section aria-labelledby="page-title">
-      <p className="mb-3 text-sm font-medium text-slate-500">Store scoring &amp; tiering</p>
-      <h1 id="page-title" className="text-4xl font-semibold tracking-tight">
-        TierForge
-      </h1>
-      <p className="mt-4 max-w-lg text-base leading-7 text-slate-600">
-        A workspace for understanding your stores. More tools are on the way.
-      </p>
+    <section className="rounded-2xl border border-slate-200 bg-white px-6 py-16 text-center shadow-sm">
+      <p className="text-xs font-bold uppercase tracking-[0.2em] text-cyan-700">404</p>
+      <h1 className="mt-3 text-3xl font-semibold tracking-tight text-slate-950">Page not found</h1>
+      <p className="mt-3 text-slate-500">The TierForge page you requested does not exist.</p>
+      <Link
+        to="/"
+        className="mt-6 inline-flex rounded-lg bg-slate-950 px-5 py-3 text-sm font-semibold text-white hover:bg-slate-800"
+      >
+        Return to upload
+      </Link>
     </section>
   );
 }
@@ -35,19 +25,11 @@ export function App() {
   return (
     <Routes>
       <Route element={<AppShell />}>
-        <Route index element={<HomePage />} />
-        <Route
-          path="*"
-          element={
-            <p>
-              Page not found.{' '}
-              <Link to="/" className="underline">
-                Go home
-              </Link>
-              .
-            </p>
-          }
-        />
+        <Route index element={<UploadPage />} />
+        <Route path="jobs/:jobId/progress" element={<ProgressPage />} />
+        <Route path="jobs/:jobId/scoring" element={<ScoringPage />} />
+        <Route path="jobs/:jobId/dashboard" element={<DashboardPage />} />
+        <Route path="*" element={<NotFoundPage />} />
       </Route>
     </Routes>
   );

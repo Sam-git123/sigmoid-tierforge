@@ -39,8 +39,13 @@ export function createScoringService(repository: ScoringRepository) {
       if (result.outcome === 'not_found') {
         throw new ApiError(404, 'JOB_NOT_FOUND', 'Job not found.');
       }
-      const { outcome: _outcome, ...current } = result;
-      return current;
+      return {
+        jobId: result.jobId,
+        revision: result.revision,
+        configuration: result.configuration,
+        storesScored: result.storesScored,
+        tierCounts: result.tierCounts,
+      };
     },
   };
 }

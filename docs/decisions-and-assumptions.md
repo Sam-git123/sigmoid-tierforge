@@ -1,6 +1,6 @@
 # Decisions and assumptions — Phase 0
 
-These record implementation choices, not original assignment requirements. Phases 1–7 implement the foundation, queued CSV ingestion, resilient enrichment lifecycle, configurable scoring, and database-backed read APIs; [current schema](database-schema.md), [CSV policy](csv-ingestion.md), [enrichment policy](enrichment-engine.md), and verification reports record evidence. Remaining UI policies are proposals. Sources are the [assignment](requirements/tierforge-requirements.md), [supplied simulator README](../enrichment_simulator/README.md), and the user's phase briefs.
+These record implementation choices, not original assignment requirements. Phases 1–8 implement the foundation, queued CSV ingestion, resilient enrichment lifecycle, configurable scoring, database-backed read APIs, and the React workflow; [current schema](database-schema.md), [CSV policy](csv-ingestion.md), [enrichment policy](enrichment-engine.md), and verification reports record evidence. Sources are the [assignment](requirements/tierforge-requirements.md), [supplied simulator README](../enrichment_simulator/README.md), and the user's phase briefs.
 
 ## Authority and repository placement
 
@@ -100,3 +100,7 @@ Phase 6 accepts numeric or decimal-string configuration values with at most two 
 ## Phase 7 amendments
 
 Phase 7 keeps list payloads bounded with page 1/page size 50 defaults and a page size maximum of 100. Lists use stable store-ID ordering. Store list counts and records share a repeatable-read snapshot, tier predicates run in SQL, and score joins select only the highest committed revision. Exact NUMERIC values remain decimal strings at the JSON boundary, while absent enrichment, score, configuration, and error fields remain null. The failure endpoint includes both failed and skipped terminal rows and exposes `finalStatus` so they remain distinct. Dashboard score/tier totals use only current-revision score rows; work-state counts come directly from `job_stores`.
+
+## Phase 8 amendments
+
+Phase 8 uses four URL routes under one responsive application shell. The job ID remains in the URL so refresh and direct navigation preserve context. TanStack Query owns all server state and polls only active job progress every two seconds. The upload screen performs basic extension/header checks before multipart submission, while the backend remains authoritative. Scoring inputs use the assignment example initially and persisted values on later visits. Submitting scoring invalidates scoring, dashboard, and store caches before navigation. The dashboard uses CSS for the tier visualization, server-side tier filtering/pagination, and locale-aware display formatting without changing stored values.

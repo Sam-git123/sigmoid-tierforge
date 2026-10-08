@@ -1,6 +1,6 @@
 # TierForge
 
-Phase 7 implementation for Sigmoid's resilient bulk store scoring/tiering exercise. Implemented: pnpm workspace, React shell, Express health/job/scoring/read APIs, PostgreSQL schema/migrations, bounded CSV ingestion, resilient enrichment workers, lease recovery, systemic-failure shutdown, persisted progress, exact configurable scoring, immutable scoring revisions, and paginated dashboard data. The React dashboard is intentionally **not implemented**.
+Phase 8 implementation for Sigmoid's resilient bulk store scoring/tiering exercise. TierForge now includes the complete React upload, progress, scoring, and analytics workflow backed by the Express/PostgreSQL APIs, resilient enrichment workers, exact configurable scoring, immutable revisions, and paginated dashboard data.
 
 ## Prerequisites
 
@@ -160,6 +160,17 @@ curl.exe http://127.0.0.1:3001/api/jobs/JOB_ID/dashboard
 
 The dashboard response contains the job status/counts, `successfullyEnrichedStores`, `failedStores`, `skippedStores`, `scoredStores`, current-revision `tierCounts`, `currentScoringRevision`, and `currentScoringConfiguration`. Unscored records do not contribute to any tier.
 
+## Frontend workflow
+
+Open `http://127.0.0.1:5173` after starting `pnpm dev`. The browser guides users through:
+
+1. Uploading and prechecking a CSV before backend validation.
+2. Polling persisted enrichment progress and inspecting terminal failures.
+3. Creating or revising the scoring configuration.
+4. Reviewing summary cards, tier distribution, and server-paginated tier-filtered store results.
+
+Job IDs remain in the URL, so progress, scoring, and dashboard pages can be refreshed or shared locally. TanStack Query stops progress polling when the job becomes terminal and invalidates scoring/dashboard/store data after recalculation.
+
 ## Commands
 
 - `pnpm run setup`: convenience alias for dependency installation; normal `pnpm install` remains the standard command.
@@ -195,9 +206,9 @@ The one-active-job constraint covers both `queued` and `running`. Exact NUMERIC 
 
 ## Architecture and boundaries
 
-The API has routes, controllers, services, repositories, database modules, middleware, an enrichment client, and a worker coordinator. Six logical loops share one monotonic limiter, claim one row at a time through `FOR UPDATE SKIP LOCKED`, and never hold a transaction across limiter or network waits. The frontend has React Router, TanStack Query, Tailwind's Vite plugin, and a reusable fetch client; no upload or dashboard screen is part of this phase.
+The API has routes, controllers, services, repositories, database modules, middleware, an enrichment client, and a worker coordinator. Six logical loops share one monotonic limiter, claim one row at a time through `FOR UPDATE SKIP LOCKED`, and never hold a transaction across limiter or network waits. The frontend uses React Router, TanStack Query, Tailwind's Vite plugin, runtime-validated API contracts, and reusable workflow components.
 
-Later phases will implement the React dashboard and remaining [planned architecture](docs/architecture.md), using the [original requirements](docs/requirements/tierforge-requirements.md). See the [implementation plan](docs/implementation-plan.md), [enrichment policy](docs/enrichment-engine.md), and [Phase 7 verification report](docs/phase-7-report.md).
+See the [planned architecture](docs/architecture.md), [original requirements](docs/requirements/tierforge-requirements.md), [implementation plan](docs/implementation-plan.md), [enrichment policy](docs/enrichment-engine.md), and [Phase 8 verification report](docs/phase-8-report.md).
 
 ## Provided simulator
 
@@ -236,7 +247,6 @@ This fallback is specific to this workspace, not a portable replacement for Dock
 - HTTP 429/5xx, network errors, and timeouts retry up to `MAX_ATTEMPTS`; invalid responses and permanent HTTP failures do not retry. Full-jitter backoff is persisted, and valid `Retry-After` values are lower bounds for the row and shared limiter.
 - A one-second watchdog reclaims expired processing leases. Startup resumes the single active job and eventually reclaims abandoned attempts; full multi-process or exactly-once restart semantics are not claimed.
 - Thirty consecutive accepted provider-related failures fail the job and skip unfinished rows. HTTP 401/403/404/405 stop it immediately as likely integration/configuration failures.
-- The React dashboard is not implemented; scoring and dashboard data are currently API-only.
 - CSV upload uses bounded in-memory multipart storage (10 MiB by default) and retains validated records until its single creation transaction completes; this is deliberate for the 5,000-row take-home scope.
 - Scoring revisions are immutable and the highest committed revision is current; historical revisions remain stored.
 - Separate attempt-history and raw-upstream-payload archival tables remain deferred.

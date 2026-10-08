@@ -4,6 +4,7 @@ export class ApiClientError extends Error {
     public readonly code: string,
     message: string,
     public readonly requestId?: string,
+    public readonly details?: unknown,
   ) {
     super(message);
     this.name = 'ApiClientError';
@@ -33,6 +34,7 @@ export function createApiClient(baseUrl: string, fetcher: typeof fetch = fetch) 
           typeof error.code === 'string' ? error.code : 'REQUEST_FAILED',
           typeof error.message === 'string' ? error.message : 'The request could not be completed.',
           typeof error.requestId === 'string' ? error.requestId : undefined,
+          error.details,
         );
       }
       return payload; // Callers validate their own response schema at the feature boundary.

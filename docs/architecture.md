@@ -1,6 +1,6 @@
 # TierForge architecture — Phase 0 proposal
 
-Status: Phase 7 database-backed read APIs are implemented alongside the foundation, ingestion, resilient enrichment lifecycle, and configurable scoring. They expose consistent progress, paginated stores/failures, and current-revision dashboard statistics. The React dashboard remains future work. See [current schema](database-schema.md), [CSV policy](csv-ingestion.md), and [enrichment policy](enrichment-engine.md).
+Status: Phase 8 completes the React workflow on top of the implemented foundation, ingestion, resilient enrichment lifecycle, scoring, and read APIs. Users can upload, observe persisted progress, inspect failures, configure or recalculate scoring, and explore current-revision dashboard results. See [current schema](database-schema.md), [CSV policy](csv-ingestion.md), and [enrichment policy](enrichment-engine.md).
 
 ## Authority and scope
 

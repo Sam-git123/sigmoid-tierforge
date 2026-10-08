@@ -30,18 +30,18 @@ Sources: [complete original assignment](requirements/tierforge-requirements.md),
 
 ### Scoring — Section 4, Step 3
 
-- [ ] **R10:** Backend configuration has one bar and one 0–100% weight for each metric, with an exact 100% sum. Phase 6 API validation is complete; the UI remains Phase 7.
-- [ ] **R11:** Backend accepts validated Large and Medium thresholds with inclusive tiering. Phase 6 API/formula coverage is complete; the UI remains Phase 7.
+- [x] **R10:** Configuration has one bar and one 0–100% weight for each metric, with an exact 100% sum. Evidence: Phase 6 API validation and Phase 8 accessible scoring form/live total.
+- [x] **R11:** Large and Medium thresholds use inclusive tiering. Evidence: Phase 6 API/formula coverage and Phase 8 validated threshold controls.
 - [x] **R12:** Score equals the sum of weights for metrics meeting their bars; no normalization or ranges. Evidence: Phase 6 SQL and pure formula tests cover equality boundaries and 0/100 scores.
 - [x] **R13:** Reproduce worked example: bars 15000/150000/8000, weights 50/30/20, thresholds 70/40; A(40000,400000,18000)=100/Large, B(20000,100000,5000)=50/Medium, C(2000,20000,9000)=20/Small. Evidence: Phase 6 unit and PostgreSQL fixtures use those exact values.
 - [x] **R14:** Score every successful enrichment from stored data, never call enrichment to recalculate, and support safe reruns after configuration changes. Evidence: Phase 6 zero-call, atomic rollback, failed-store exclusion, and concurrent revision tests.
 
 ### Dashboard — Section 4, Step 4
 
-- [ ] **R15:** Show enriched, failed, and pending counts and visible failure reasons. Phase 7 backend APIs are complete; React presentation remains future work.
-- [ ] **R16:** Show Large, Medium, and Small counts. Phase 7 returns current-revision database counts; React presentation remains future work.
-- [ ] **R17:** Show store name, category-equivalent metrics, score, and tier. Phase 7 returns these fields with correct null handling; React presentation remains future work.
-- [ ] **R18:** Filter the store list by tier. Phase 7 performs filtering/counting in SQL; React controls remain future work.
+- [x] **R15:** Show enriched, failed, and pending counts and visible failure reasons. Evidence: Phase 7 APIs and Phase 8 progress/failure views.
+- [x] **R16:** Show Large, Medium, and Small counts. Evidence: Phase 7 current-revision counts and Phase 8 summary/chart.
+- [x] **R17:** Show store name, category-equivalent metrics, score, and tier. Evidence: Phase 8 responsive store results table with correct null handling.
+- [x] **R18:** Filter the store list by tier. Evidence: Phase 8 tier control issues server-filtered paginated requests.
 
 ### Supplied service and data — Section 5
 
@@ -283,9 +283,19 @@ Acceptance:
 - Dashboard counts use persisted work/current-revision scores; unscored rows never become Small.
 - Focused PostgreSQL tests cover empty results, validation, pagination boundaries, partial failure, rescoring, tier counts, reasons, and duplicate prevention.
 
-### Phase 8 — React dashboard, integration, and submission preparation (future)
+### Phase 8 — React workflow and dashboard (implemented)
 
-Complete polling dashboard, failure detail, scoring UI, tier-filtered list, final checks, and full-sample walkthrough. Prioritize core defect correction over UI polish or bonuses.
+Implemented the responsive four-step React workflow with multipart CSV upload, active-only progress polling, terminal failure inspection, persisted scoring configuration/recalculation, current-revision summary cards and tier visualization, and server-filtered paginated store results.
+
+Acceptance:
+
+- Upload gives immediate header feedback, preserves backend error authority, and links active-job conflicts to progress.
+- Progress uses persisted counts and percentage, polls about every two seconds only while active, and shows no invented ETA or speed.
+- Terminal jobs expose failure details and allow scoring whenever at least one store succeeded.
+- Scoring starts from the worked example or the persisted configuration, validates exact weight totals, and refreshes all related query caches after recalculation.
+- Dashboard summary/tier/list data comes from Phase 7 APIs; tier changes and pagination issue new server requests.
+- Responsive tables, labeled controls, focus states, and explicit loading/error/empty/unscored states support keyboard and smaller-screen use.
+- Focused frontend tests cover CSV messages, invalid weights, submitted payloads, progress/failure display, tier query behavior, and dashboard loading/empty states.
 
 ### Optional phase — Bonuses (no reserved core budget)
 

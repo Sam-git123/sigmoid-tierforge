@@ -295,22 +295,30 @@ describe.skipIf(!connectionString)('PostgreSQL foundation (isolated schema)', ()
   });
   it('rolls back failed migration DDL and rejects modified migration history', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'tierforge-migration-test-'));
-    const source = fileURLToPath(new URL('../migrations/001_foundation.sql', import.meta.url));
+    const foundationSource = fileURLToPath(
+      new URL('../migrations/001_foundation.sql', import.meta.url),
+    );
+    const failureStreakSource = fileURLToPath(
+      new URL('../migrations/002_job_failure_streak.sql', import.meta.url),
+    );
     const first = join(directory, '001_foundation.sql');
-    const second = join(directory, '002_broken.sql');
+    const second = join(directory, '002_job_failure_streak.sql');
+    const broken = join(directory, '003_broken.sql');
     try {
-      await copyFile(source, first);
-      await writeFile(second, 'CREATE TABLE should_rollback (id integer); SELECT invalid_column;');
+      await copyFile(foundationSource, first);
+      await copyFile(failureStreakSource, second);
+      await writeFile(broken, 'CREATE TABLE should_rollback (id integer); SELECT invalid_column;');
       await expect(runMigrations(pool, directory)).rejects.toMatchObject({ code: '42703' });
       expect(
         (await pool.query("SELECT to_regclass('should_rollback') AS relation")).rows[0].relation,
       ).toBeNull();
-      expect((await pool.query('SELECT count(*) FROM schema_migrations')).rows[0].count).toBe('1');
+      expect((await pool.query('SELECT count(*) FROM schema_migrations')).rows[0].count).toBe('2');
       await writeFile(first, '-- changed migration');
       await expect(runMigrations(pool, directory)).rejects.toThrow('Applied migration has changed');
     } finally {
       await unlink(first);
       await unlink(second);
+      await unlink(broken);
       await rmdir(directory);
     }
   });
