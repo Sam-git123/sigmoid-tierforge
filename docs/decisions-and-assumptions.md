@@ -1,6 +1,6 @@
 # Decisions and assumptions — Phase 0
 
-These record implementation choices, not original assignment requirements. Phases 1–6 implement the foundation, queued CSV ingestion, resilient enrichment lifecycle, and configurable scoring; [current schema](database-schema.md), [CSV policy](csv-ingestion.md), [enrichment policy](enrichment-engine.md), and verification reports record evidence. Remaining UI policies are proposals. Sources are the [assignment](requirements/tierforge-requirements.md), [supplied simulator README](../enrichment_simulator/README.md), and the user's phase briefs.
+These record implementation choices, not original assignment requirements. Phases 1–7 implement the foundation, queued CSV ingestion, resilient enrichment lifecycle, configurable scoring, and database-backed read APIs; [current schema](database-schema.md), [CSV policy](csv-ingestion.md), [enrichment policy](enrichment-engine.md), and verification reports record evidence. Remaining UI policies are proposals. Sources are the [assignment](requirements/tierforge-requirements.md), [supplied simulator README](../enrichment_simulator/README.md), and the user's phase briefs.
 
 ## Authority and repository placement
 
@@ -96,3 +96,7 @@ Phase 5 adds a persisted provider-failure streak, one-row-at-a-time expired-leas
 ## Phase 6 amendments
 
 Phase 6 accepts numeric or decimal-string configuration values with at most two decimal places, normalizes them to exact two-place strings, and validates the weight sum in integer hundredths. Scoring locks a terminal job, allocates `max(revision) + 1`, inserts its configuration, and calculates every successful store using SQL `CASE` expressions in one transaction. The highest committed revision is the current view. Failed/skipped stores are excluded even if inconsistent legacy metrics exist, and the scoring module has no enrichment-client dependency.
+
+## Phase 7 amendments
+
+Phase 7 keeps list payloads bounded with page 1/page size 50 defaults and a page size maximum of 100. Lists use stable store-ID ordering. Store list counts and records share a repeatable-read snapshot, tier predicates run in SQL, and score joins select only the highest committed revision. Exact NUMERIC values remain decimal strings at the JSON boundary, while absent enrichment, score, configuration, and error fields remain null. The failure endpoint includes both failed and skipped terminal rows and exposes `finalStatus` so they remain distinct. Dashboard score/tier totals use only current-revision score rows; work-state counts come directly from `job_stores`.

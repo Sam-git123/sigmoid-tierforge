@@ -1,6 +1,6 @@
 # TierForge architecture — Phase 0 proposal
 
-Status: Phase 6 configurable scoring and tiering are implemented alongside the foundation, ingestion, and resilient enrichment lifecycle. Terminal jobs can publish immutable scoring revisions with exact decimal validation and one set-based PostgreSQL calculation. The frontend dashboard remains future work. See [current schema](database-schema.md), [CSV policy](csv-ingestion.md), and [enrichment policy](enrichment-engine.md).
+Status: Phase 7 database-backed read APIs are implemented alongside the foundation, ingestion, resilient enrichment lifecycle, and configurable scoring. They expose consistent progress, paginated stores/failures, and current-revision dashboard statistics. The React dashboard remains future work. See [current schema](database-schema.md), [CSV policy](csv-ingestion.md), and [enrichment policy](enrichment-engine.md).
 
 ## Authority and scope
 
@@ -182,18 +182,18 @@ Use foreign keys, unique `(job_id, store_id)`, unique attempt numbers per work r
 
 ## API and dashboard contract
 
-Proposed endpoints, not assignment-prescribed URLs:
+Implemented endpoints, except where explicitly marked future:
 
 - `POST /api/jobs`: multipart upload; `202` on durable acceptance; `400` malformed CSV, `422` validation, `413` limits, `409` active-job conflict.
-- `GET /api/jobs/current`: active job summary, otherwise most recent job, otherwise `{job: null}`. Lets the UI find an accepted upload after refresh.
-- `GET /api/jobs/:jobId`: status, total, enriched, failed, pending, queued/processing/retry-wait subtotals, attempt count summary, job failure reason, config revision, and Large/Medium/Small counts.
-- `GET /api/jobs/:jobId/stores?tier=Large&status=succeeded&page=1&pageSize=50&configRevision=2`: stable store-ID/row-ID ordering, filtered count, name, original store fields, three metrics, work status, score, tier, attempt count, and last/final failure. `tier` and revision optional; restrict page size to 100. Include the effective revision in every response.
-- `GET /api/jobs/:jobId/stores/:workId`: detailed current/final error and bounded attempt history; IDs must belong to the requested job.
+- `GET /api/jobs/:jobId`: job lifecycle timestamps/failure fields plus all six persisted work-state counts and derived progress.
+- `GET /api/jobs/:jobId/stores?tier=Large&page=1&pageSize=50`: stable store-ID ordering, SQL-filtered count, original store fields, work status, nullable metrics, current-revision score/tier, and last error. Tier is optional; page size is capped at 100.
+- `GET /api/jobs/:jobId/failures?page=1&pageSize=50`: stable, paginated failed and skipped records with attempt count and final error. The final status keeps those outcomes distinguishable.
+- `GET /api/jobs/:jobId/dashboard`: job summary, enrichment/failure/skip totals, current-revision scored/tier counts, and current scoring configuration.
 - `POST /api/jobs/:jobId/scoring`: bars, weights, tier thresholds; `201` with revision, scored count, and tier counts after atomic calculation. Each accepted submission produces a new revision.
 - `GET /api/jobs/:jobId/scoring`: highest committed configuration and summary, or a null configuration before scoring.
 - `GET /api/health`: app/database readiness, `503` on DB failure. Optional simulator `/health` is advisory; it is not proof `/enrich` will succeed.
 
-Dashboard `pending = queued + processing + retry_wait`; therefore `total = enriched + failed + pending`. Get progress and tier counts in one consistent statement/snapshot. Query stores with an explicit revision obtained from the dashboard, and discard/refetch responses for obsolete revisions after scoring mutations. Job progress can advance between polls; score/count consistency must not silently mix revisions. When configured, tier counts sum to enriched; before configuration they sum to zero and the UI says unscored. Surface failed rows even if a tier filter would otherwise exclude them, through a separate failure view/status filter.
+Dashboard unfinished work is `pending + processing + retry_wait`; terminal work is `succeeded + failed + skipped`. Dashboard progress/tier counts use one statement snapshot. Store page records and their filtered total use a repeatable-read transaction. Both score views join the highest committed configuration revision, so old revisions neither duplicate rows nor affect current counts. Before configuration, scored and tier counts are zero and all store scores/tiers are null. Failed and skipped rows remain visible through the separate failure endpoint even when a store tier filter is active.
 
 Use TanStack Query to poll active jobs every two seconds, pause in hidden tabs, and stop automatic progress polling at terminal state; invalidate relevant queries after upload/scoring. Show retry waiting as pending, display terminal job reasons, and retain partial successful results after failure. Label 'category-equivalent metrics' as the three enrichment metrics; no category field is supplied or required by the contract.
 

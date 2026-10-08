@@ -26,7 +26,7 @@ Sources: [complete original assignment](requirements/tierforge-requirements.md),
 
 - [x] **R07:** Submission creates a job that enriches each store using the external `POST /enrich` contract. Evidence: Phases 2/3; one persisted work row per accepted store, asynchronous `202` response, and coordinator integration test.
 - [x] **R08:** Persist `estimated_monthly_footfall`, `estimated_monthly_revenue`, and `store_size_sqft` for accepted successes. Evidence: Phase 3 response validation and fenced PostgreSQL persistence tests.
-- [ ] **R09:** Track succeeded, failed, and pending work; expose job progress and final per-store reasons. Evidence: Phases 3/5 count invariants, partial-success and failure views.
+- [x] **R09:** Track succeeded, failed, and pending work; expose job progress and final per-store reasons. Evidence: Phases 3/5 count invariants and Phase 7 persisted progress/failure APIs.
 
 ### Scoring — Section 4, Step 3
 
@@ -38,10 +38,10 @@ Sources: [complete original assignment](requirements/tierforge-requirements.md),
 
 ### Dashboard — Section 4, Step 4
 
-- [ ] **R15:** Show enriched, failed, and pending counts and visible failure reasons. Evidence: Phase 5 UI smoke checks against durable states.
-- [ ] **R16:** Show Large, Medium, and Small counts. Evidence: Phases 4/5 counts agree with the published scoring revision.
-- [ ] **R17:** Show store name, category-equivalent metrics, score, and tier. Interpret metrics as the three documented enrichment fields; do not invent categories. Evidence: Phase 5 list checks for scored, failed, pending, and unscored rows.
-- [ ] **R18:** Filter the store list by tier. Evidence: Phase 5 filter/pagination tests and browser checks.
+- [ ] **R15:** Show enriched, failed, and pending counts and visible failure reasons. Phase 7 backend APIs are complete; React presentation remains future work.
+- [ ] **R16:** Show Large, Medium, and Small counts. Phase 7 returns current-revision database counts; React presentation remains future work.
+- [ ] **R17:** Show store name, category-equivalent metrics, score, and tier. Phase 7 returns these fields with correct null handling; React presentation remains future work.
+- [ ] **R18:** Filter the store list by tier. Phase 7 performs filtering/counting in SQL; React controls remain future work.
 
 ### Supplied service and data — Section 5
 
@@ -270,18 +270,22 @@ Acceptance:
 - Tier counts/store rows refer to one explicit revision; newly successful stores receive that revision automatically. Failed/pending rows remain unscored.
 - Focused unit and PostgreSQL tests cover the assignment examples, inclusive boundaries, zero weights, invalid precision/totals/thresholds, failed-store exclusion, reruns, rollback, and concurrent revision allocation. A full 5,000-row timing run remains for final integration. Covers backend portions of R10–R14/R16, U05, and Q07.
 
-### Phase 7 — Dashboard, integration, and submission preparation (future)
+### Phase 7 — Read APIs for dashboard data (implemented)
 
-Complete polling dashboard, failure detail, scoring UI, tier-filtered list, README, final checks, and full-sample walkthrough. Prioritize core defect correction over UI polish or bonuses.
+Implemented database-backed job progress, stable paginated store/failure lists, SQL tier filtering, and a current-revision dashboard summary. The React dashboard is deliberately outside this phase.
 
 Acceptance:
 
-- Browser flow covers upload, observable progress, retries/final failures, reconfiguration, tier breakdown, and filtering/pagination; errors and unscored states are clear.
-- Counts satisfy `total = enriched + failed + pending`; pending includes queued/processing/retry_wait. With a config, tier counts match successes. No mixed revisions after recalculation.
-- Full supplied CSV completes to an honest terminal outcome; inspect failed-store reasons and record elapsed time/dispatch evidence. Never require zero failures from a deliberately flaky upstream.
-- `pnpm test`, lint, typecheck, and production builds pass, or remaining failures are reported with exact scope. README documents one test command and its PostgreSQL prerequisite.
-- Fresh setup instructions include simulator commands from its directory (`pip install -r requirements.txt`, `uvicorn main:app --port 8000`), app/DB commands, env configuration, architecture, and known limits.
-- Repository includes backend/frontend and supplied sample assets; disclose missing generator if still unavailable. Prepare repository/ZIP delivery without automatically committing or pushing. Covers R01/R02/R15–R19/R29–R35, U06, Q03/Q04/Q09.
+- Unknown and invalid IDs return consistent 404/422 envelopes.
+- Store pages use stable ordering, return database nulls for missing metrics/scores, and cap page size at 100.
+- Tier filters and totals are applied in SQL against only the highest committed score revision.
+- Failure pages distinguish failed from skipped work and retain final reasons.
+- Dashboard counts use persisted work/current-revision scores; unscored rows never become Small.
+- Focused PostgreSQL tests cover empty results, validation, pagination boundaries, partial failure, rescoring, tier counts, reasons, and duplicate prevention.
+
+### Phase 8 — React dashboard, integration, and submission preparation (future)
+
+Complete polling dashboard, failure detail, scoring UI, tier-filtered list, final checks, and full-sample walkthrough. Prioritize core defect correction over UI polish or bonuses.
 
 ### Optional phase — Bonuses (no reserved core budget)
 

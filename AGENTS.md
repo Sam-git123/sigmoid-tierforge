@@ -10,7 +10,7 @@ The requirements were copied unchanged from `enrichment_simulator/docs/requireme
 
 ## Phase and scope
 
-Implement **only the phase explicitly requested by the user**. The current authorized phase is **Phase 6: configurable scoring and tiering**. Implement exact configuration validation, immutable scoring revisions, set-based PostgreSQL calculation, atomic recalculation, and current-configuration APIs. Do not implement frontend dashboard functionality; later phases require a subsequent request.
+Implement **only the phase explicitly requested by the user**. The current authorized phase is **Phase 7: read APIs for progress, failures, scoring results, and dashboard statistics**. Implement database-backed, paginated, current-revision read models and consistent validation/errors. Do not implement the React dashboard; it requires a subsequent request.
 Prioritize one active enrichment job and the complete core workflow. Multiple concurrent jobs and full restart resumability are assignment bonuses. Do not add authentication, microservices, Redis, BullMQ, Kafka, Kubernetes, or distributed rate limiting to core scope.
 Never automatically stage, commit, push, or publish changes. A suggested commit message is informational only.
 
@@ -57,3 +57,7 @@ Read `docs/enrichment-engine.md` and the unchanged simulator README before chang
 ## Phase 6 scoring policy
 
 Read the scoring section of `docs/architecture.md` before changing scoring. Accept at most two decimal places and normalize validated decimal inputs to strings; validate weight totals in integer hundredths. Score only terminal jobs and only rows whose work state is succeeded. Each submission locks the job, inserts a new immutable revision, and calculates all scores with one `INSERT ... SELECT` transaction. The highest committed revision is current. Scoring must not import or call the enrichment client.
+
+## Phase 7 read API policy
+
+Read APIs expose camelCase JSON while retaining exact PostgreSQL NUMERIC values as decimal strings. Store and failure pages default to 50 records and cap page size at 100, with stable `store_id` ordering. Tier filtering and filtered totals happen in SQL. Store scores join only the highest committed configuration revision, so historical revisions never duplicate list rows. Missing enrichment and score values remain null. Dashboard counts come from persisted work and current-revision score rows; skipped work is reported separately and unscored work is never classified as Small.

@@ -8,8 +8,10 @@ import { createHealthRepository } from './repositories/health-repository.js';
 import { createEnrichmentRepository } from './repositories/enrichment-repository.js';
 import { createJobRepository } from './repositories/job-repository.js';
 import { createScoringRepository } from './repositories/scoring-repository.js';
+import { createDashboardRepository } from './repositories/dashboard-repository.js';
 import { createJobService } from './services/job-service.js';
 import { createScoringService } from './services/scoring.service.js';
+import { createDashboardService } from './services/dashboard-service.js';
 import { createCoordinator } from './workers/coordinator.js';
 import { createRateLimiter } from './workers/rate-limiter.js';
 
@@ -59,6 +61,7 @@ async function start(): Promise<void> {
     jobService,
     csvMaxBytes: env.CSV_MAX_BYTES,
     scoringService: createScoringService(createScoringRepository(pool)),
+    dashboardService: createDashboardService(createDashboardRepository(pool)),
   });
   try {
     await coordinator.start();
