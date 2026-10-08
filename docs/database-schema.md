@@ -1,6 +1,6 @@
 # Phase 1 database schema
 
-The Phase 1 user request supersedes the Phase 0 schema proposal. The source of executable schema truth is [001_foundation.sql](../apps/api/migrations/001_foundation.sql). Phase 2 uses `jobs` and `job_stores` for atomic queued job creation; Phases 3 and 4 use the existing lease, retry, error, and `store_enrichments` columns, so no new migration is required. Scoring business logic does not exist yet.
+The Phase 1 user request supersedes the Phase 0 schema proposal. The source of executable schema truth is [001_foundation.sql](../apps/api/migrations/001_foundation.sql), followed by the Phase 5 failure-streak migration. Phase 2 uses `jobs` and `job_stores` for atomic queued job creation; Phases 3–5 use the lease, retry, error, enrichment, and failure-streak columns. Phase 6 uses the existing scoring tables without another migration.
 
 ## Tables and keys
 
@@ -37,9 +37,9 @@ Primary-key indexes cover referenced store/config identities. Foreign keys use r
 
 Use job_stores instead of store_work, and store_enrichments instead of enrichment_results. Composite store identity replaces internal work UUIDs. max_attempts belongs to job_stores. queued and skipped are included exactly as requested.
 
-No enrichment_attempts table, raw JSON payload, run-settings snapshot, failure-streak counter, or published-config pointer is added in this phase. These were earlier design proposals, not prescribed Phase 1 fields. Future phases must reconcile the proposal with this schema through explicit migrations. A future atomic config-plus-scores transaction could use the highest committed revision as the published revision without a pointer; no such publication logic exists now.
+No enrichment-attempt table, raw JSON payload, run-settings snapshot, or published-config pointer is present. Phase 5 added the failure-streak counter. Phase 6 uses the highest committed scoring revision as current, so an uncommitted or rolled-back revision is never exposed.
 
-Configuration rows are keyed by revision rather than overwriting one config per job. Scores reference that exact same-job revision. This preserves the planned separation and reproducibility without implementing recalculation.
+Configuration rows are keyed by revision rather than overwriting one config per job. Scores reference that exact same-job revision. Phase 6 locks the terminal job, allocates the next revision, inserts the configuration, and computes scores with one set-based statement in the same transaction. Historical revisions remain reproducible.
 
 ## Migration safety
 

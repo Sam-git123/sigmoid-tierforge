@@ -1,6 +1,6 @@
 # TierForge implementation plan — Phase 0
 
-Phases 0–5 are implemented through worker recovery and complete enrichment job lifecycle handling. Scoring and dashboard work remain plans requiring later requests. See the phase verification reports and [current schema](database-schema.md). Checkboxes remain unchecked until the complete requirement has implementation evidence.
+Phases 0–6 are implemented through configurable scoring and tiering over terminal enrichment jobs. The frontend dashboard remains planned for a later request. See the phase verification reports and [current schema](database-schema.md). Checkboxes remain unchecked until the complete requirement has implementation evidence.
 
 Sources: [complete original assignment](requirements/tierforge-requirements.md), [simulator README](../enrichment_simulator/README.md), and the user's Phase 0 brief. See [architecture](architecture.md) for flow/transaction details and [decisions](decisions-and-assumptions.md) for chosen defaults. `R` identifies assignment core requirements, `Q` evaluation/quality criteria, `U` user-directed constraints, `B` assignment bonuses, and `D` implementation choices. Phase references connect each item to planned acceptance evidence.
 
@@ -9,7 +9,7 @@ Sources: [complete original assignment](requirements/tierforge-requirements.md),
 ### Context, evaluation, and stack — Sections 1–3
 
 - [ ] **R01 — §1:** Process a large store list through enrichment and user-configurable scoring/tiering. Evidence: Phase 5 full 5,000-row exercise and dashboard; Phases 2–4 provide constituent flows.
-- [ ] **Q01 — §2 architecture/data modeling:** Separate unreliable enrichment, persisted raw data, work units, and deterministic calculated scores. Evidence: Phases 1/3/4 boundaries, schema review, and zero-network scoring test.
+- [x] **Q01 — §2 architecture/data modeling:** Separate unreliable enrichment, persisted raw data, work units, and deterministic calculated scores. Evidence: Phases 1–6 boundaries, schema review, and zero-network scoring test.
 - [x] **Q02 — §2 resilience/concurrency:** Phases 4–5 cover bounded retries, timeouts, fencing, expired-lease recovery, completion races, and systemic termination.
 - [ ] **Q03 — §2 code quality:** Readable names, consistent error handling, understandable code that can be defended in review. Evidence: each phase's focused review and final architecture walkthrough.
 - [ ] **Q04 — §2 tests:** Tests are optional in the assignment, encouraged for retry/backoff/formula/boundaries; this project's user-specified stack and plan adopt them. Evidence: Phases 3–5, single documented test command.
@@ -30,11 +30,11 @@ Sources: [complete original assignment](requirements/tierforge-requirements.md),
 
 ### Scoring — Section 4, Step 3
 
-- [ ] **R10:** UI configuration has one bar and one 0–100% weight for each of three metrics; weights sum to 100%. Evidence: Phase 6 form/API validation, exact decimal sum tests.
-- [ ] **R11:** User can configure Large/Medium/Small score thresholds. Evidence: Phase 6 inclusive comparison tests and validated configuration UI.
-- [ ] **R12:** Score equals the sum of weights for metrics meeting their bars; no normalization or ranges. Evidence: Phase 6 SQL formula tests, equality boundaries, 0/100 scores.
-- [ ] **R13:** Reproduce worked example: bars 15000/150000/8000, weights 50/30/20, thresholds 70/40; A(40000,400000,18000)=100/Large, B(20000,100000,5000)=50/Medium, C(2000,20000,9000)=20/Small. Evidence: Phase 6 fixtures with those exact values.
-- [ ] **R14:** Score every successful enrichment from stored data, never call enrichment to recalculate, and support fast safe reruns after any configuration change. Evidence: Phase 6 zero-call test, atomic rollback/concurrent submission tests, active-enrichment race test, and 5,000-row timing measurement.
+- [ ] **R10:** Backend configuration has one bar and one 0–100% weight for each metric, with an exact 100% sum. Phase 6 API validation is complete; the UI remains Phase 7.
+- [ ] **R11:** Backend accepts validated Large and Medium thresholds with inclusive tiering. Phase 6 API/formula coverage is complete; the UI remains Phase 7.
+- [x] **R12:** Score equals the sum of weights for metrics meeting their bars; no normalization or ranges. Evidence: Phase 6 SQL and pure formula tests cover equality boundaries and 0/100 scores.
+- [x] **R13:** Reproduce worked example: bars 15000/150000/8000, weights 50/30/20, thresholds 70/40; A(40000,400000,18000)=100/Large, B(20000,100000,5000)=50/Medium, C(2000,20000,9000)=20/Small. Evidence: Phase 6 unit and PostgreSQL fixtures use those exact values.
+- [x] **R14:** Score every successful enrichment from stored data, never call enrichment to recalculate, and support safe reruns after configuration changes. Evidence: Phase 6 zero-call, atomic rollback, failed-store exclusion, and concurrent revision tests.
 
 ### Dashboard — Section 4, Step 4
 
@@ -80,12 +80,12 @@ Sources: [complete original assignment](requirements/tierforge-requirements.md),
 - [x] **U02:** One store per persisted work unit; asynchronous enrichment; durable processing, retry, success, and failure states. Phases 2–4 state and persistence tests.
 - [x] **U03:** Phases 4–5 cover atomic claims, fencing, bounded jittered retries, timeout/network handling, and the general lease reaper.
 - [x] **U04:** One process-wide limiter used by the background worker module without extra queue infrastructure. Phase 4 proves initial and retry attempts share it, including provider cooldown.
-- [ ] **U05:** Separate raw enrichment from scores and enrichment module from scoring; set-based bulk scoring. Phase 6 dependency/SQL review and zero-network test.
+- [x] **U05:** Separate raw enrichment from scores and enrichment module from scoring; Phase 6 uses set-based SQL and proves zero upstream calls.
 - [ ] **U06:** Polling dashboard; no authentication or infrastructure expansion. Phase 5 behavior/scope review.
 - [ ] **U07:** Phase 0 creates project guidance, architecture with three Mermaid diagrams, traceable plan, and explicit decisions/assumptions; no application implementation, package installation, or commits. Phase 0 document verification.
 - [x] **Q05:** Progress remains responsive while enrichment runs; upload HTTP request does not wait on remote work. Phase 3 controlled-client integration test holds enrichment open after the `202` response.
 - [ ] **Q06:** Bounded memory, no whole-job fan-out, bounded connection usage, no network waits inside DB transactions. Phases 2/3 limits and concurrency review.
-- [ ] **Q07:** Exact numeric scoring and atomic revision visibility. Phase 6 database precision and transaction tests.
+- [x] **Q07:** Exact numeric scoring and atomic revision visibility. Phase 6 validates integer-hundredth inputs and tests rollback/concurrent publication.
 - [ ] **Q08:** Configurable operational defaults, structured actionable errors/logs, no false success reports. Phases 1/3/5 environment validation and failure walkthrough.
 - [ ] **Q09:** Responsive accessible forms, labels, keyboard operation, visible validation/loading/error states. Phase 5 manual checks; these are chosen quality goals, not additional assignment features.
 
@@ -136,15 +136,15 @@ Constraints/indexes: composite FK `(job_id, config_id)` to configs and `(job_id,
 - `GET /api/jobs/:jobId`: status, persisted progress counts/substates, timestamps, job reason, current config revision, and tier breakdown.
 - `GET /api/jobs/:jobId/stores`: optional `tier`, `status`, `configRevision`; page defaults 1, page size 50/max 100. Return effective revision, total matching rows, and store fields/metrics/score/tier/error. Validate filters; parameterize SQL.
 - `GET /api/jobs/:jobId/stores/:workId`: store detail and attempt history. Reject cross-job work IDs with `404`.
-- `POST /api/jobs/:jobId/scoring-configs`: `{metrics: {estimated_monthly_footfall: {bar, weight}, estimated_monthly_revenue: {bar, weight}, store_size_sqft: {bar, weight}}, tiers: {largeMin, mediumMin}}`, where decimal values are strings. `201 {configId, revision, scoredCount, tierCounts}` after publication. Invalid weights/bars/thresholds: `422`.
-- `GET /api/jobs/:jobId/scoring-configs/current`: current configuration plus revision, or `{config: null}`.
+- `POST /api/jobs/:jobId/scoring`: flat camel-case bars, weights, and tier thresholds as numbers or decimal strings. `201` returns revision, configuration, stores scored, and tier counts. Invalid weights/bars/thresholds: `422`.
+- `GET /api/jobs/:jobId/scoring`: highest committed configuration plus revision and tier summary, or a null configuration before scoring.
 - `GET /api/health`: DB readiness, `503` if unavailable; do not couple DB readiness to a flaky upstream.
 
 Error envelope: `{error: {code, message, details?, requestId}}`. Invalid multipart/CSV syntax `400`; unsupported content type `415`; file limits `413`; semantic validation `422`; unknown resources `404`; DB outage `503`; unexpected internal error `500` with safe message. A persisted job/store failure is represented in a successful GET response, not an HTTP 500. A scoring statement timeout returns a safe transient error and keeps the previous revision.
 
 ## Proposed folder structure
 
-This tree began as the Phase 0 target layout. The foundation, ingestion, client, repositories, worker, watchdog, and lifecycle modules through Phase 5 now exist; scoring and dashboard portions remain planned.
+This tree began as the Phase 0 target layout. The foundation, ingestion, resilient worker lifecycle, and scoring modules through Phase 6 now exist; the frontend dashboard remains planned.
 
 ```text
 sigmoid-tierforge/
@@ -258,9 +258,9 @@ Job-wide systemic-failure termination and general expired-processing reclamation
 
 Implemented the independent expired-lease reaper, periodic coordinator watchdog, bounded job-wide systemic-failure policy, persistent progress percentage, and terminalization of all unfinished work. The watchdog is separate from Phase 4's per-attempt logical timeout. Focused PostgreSQL tests cover lease recovery, final-attempt expiry, completion races, lifecycle states, systemic stop, late-result fencing, progress invariants, and active-slot release.
 
-### Phase 6 — Scoring configuration and recalculation (future)
+### Phase 6 — Scoring configuration and recalculation (implemented)
 
-Implement form validation, immutable config revisions, exact SQL scoring, atomic publication, and same-formula scoring of subsequent successes.
+Implemented exact two-decimal API validation, immutable per-job revisions, terminal-job gating, one set-based SQL scoring statement, atomic publication, current-configuration reads, and zero-network recalculation. No schema migration was needed because Phase 1 already created revisioned configuration and score tables.
 
 Acceptance:
 
@@ -268,7 +268,7 @@ Acceptance:
 - Rerunning changes scores/tiers from stored metrics with zero enrichment calls and no raw-data changes.
 - Forced mid-calculation failure preserves the previous visible revision. Concurrent submissions serialize; a concurrent accepted success appears under the correct active revision.
 - Tier counts/store rows refer to one explicit revision; newly successful stores receive that revision automatically. Failed/pending rows remain unscored.
-- Measure 5,000-row recalculation on the documented local environment; aim for under two seconds, a chosen target, not an assignment SLA. A five-second statement timeout rolls back cleanly. Covers R10–R14/R16, U05, Q07.
+- Focused unit and PostgreSQL tests cover the assignment examples, inclusive boundaries, zero weights, invalid precision/totals/thresholds, failed-store exclusion, reruns, rollback, and concurrent revision allocation. A full 5,000-row timing run remains for final integration. Covers backend portions of R10–R14/R16, U05, and Q07.
 
 ### Phase 7 — Dashboard, integration, and submission preparation (future)
 

@@ -1,6 +1,6 @@
 # TierForge
 
-Phase 5 implementation for Sigmoid's resilient bulk store scoring/tiering exercise. Implemented: pnpm workspace, React shell, Express health/job API, PostgreSQL schema/migrations, bounded CSV ingestion, asynchronous enrichment workers, shared five-per-second admission, bounded persisted retries, independent HTTP deadlines, lease-fenced persistence, expired-lease recovery, systemic-failure shutdown, and persisted job progress. Scoring and the frontend dashboard are intentionally **not implemented**.
+Phase 6 implementation for Sigmoid's resilient bulk store scoring/tiering exercise. Implemented: pnpm workspace, React shell, Express health/job/scoring APIs, PostgreSQL schema/migrations, bounded CSV ingestion, resilient enrichment workers, lease recovery, systemic-failure shutdown, persisted progress, exact configurable scoring, and immutable scoring revisions. The frontend dashboard is intentionally **not implemented**.
 
 ## Prerequisites
 
@@ -93,6 +93,22 @@ curl.exe http://127.0.0.1:3001/api/jobs/45dbdc13-56f4-4921-9f70-ad8ad9d69c63
 
 The [CSV contract](docs/csv-ingestion.md) documents header/value policy, limits, warnings, status codes, and transaction behavior. The response reflects the committed queued record, then the coordinator starts it asynchronously. A queued or running job causes `409 ACTIVE_JOB_EXISTS`; historical terminal jobs remain available.
 
+## Scoring API
+
+After a job reaches `completed`, `completed_with_errors`, or `failed`, submit a scoring configuration:
+
+```powershell
+curl.exe -X POST http://127.0.0.1:3001/api/jobs/JOB_ID/scoring -H "Content-Type: application/json" -d '{"footfallBar":15000,"revenueBar":150000,"sizeBar":8000,"footfallWeight":50,"revenueWeight":30,"sizeWeight":20,"largeThreshold":70,"mediumThreshold":40}'
+```
+
+Read the highest committed configuration and its tier summary:
+
+```powershell
+curl.exe http://127.0.0.1:3001/api/jobs/JOB_ID/scoring
+```
+
+Configuration values support at most two decimal places. The three weights must total exactly `100.00`; metric and tier comparisons are inclusive. Every POST creates an immutable revision and recalculates successful enrichments in one database transaction without calling the enrichment API.
+
 ## Commands
 
 - `pnpm run setup`: convenience alias for dependency installation; normal `pnpm install` remains the standard command.
@@ -130,7 +146,7 @@ The one-active-job constraint covers both `queued` and `running`. Exact NUMERIC 
 
 The API has routes, controllers, services, repositories, database modules, middleware, an enrichment client, and a worker coordinator. Six logical loops share one monotonic limiter, claim one row at a time through `FOR UPDATE SKIP LOCKED`, and never hold a transaction across limiter or network waits. The frontend has React Router, TanStack Query, Tailwind's Vite plugin, and a reusable fetch client; no upload or dashboard screen is part of this phase.
 
-Later phases will implement the remaining [planned architecture](docs/architecture.md), using the [original requirements](docs/requirements/tierforge-requirements.md). See the [implementation plan](docs/implementation-plan.md), [enrichment policy](docs/enrichment-engine.md), and [Phase 5 verification report](docs/phase-5-report.md).
+Later phases will implement the remaining [planned architecture](docs/architecture.md), using the [original requirements](docs/requirements/tierforge-requirements.md). See the [implementation plan](docs/implementation-plan.md), [enrichment policy](docs/enrichment-engine.md), and [Phase 6 verification report](docs/phase-6-report.md).
 
 ## Provided simulator
 
@@ -169,8 +185,8 @@ This fallback is specific to this workspace, not a portable replacement for Dock
 - HTTP 429/5xx, network errors, and timeouts retry up to `MAX_ATTEMPTS`; invalid responses and permanent HTTP failures do not retry. Full-jitter backoff is persisted, and valid `Retry-After` values are lower bounds for the row and shared limiter.
 - A one-second watchdog reclaims expired processing leases. Startup resumes the single active job and eventually reclaims abandoned attempts; full multi-process or exactly-once restart semantics are not claimed.
 - Thirty consecutive accepted provider-related failures fail the job and skip unfinished rows. HTTP 401/403/404/405 stop it immediately as likely integration/configuration failures.
-- No scoring calculations or dashboard are implemented.
+- The frontend dashboard is not implemented; scoring is currently API-only.
 - CSV upload uses bounded in-memory multipart storage (10 MiB by default) and retains validated records until its single creation transaction completes; this is deliberate for the 5,000-row take-home scope.
-- Configuration revisions and score references are schema support only; revision publication/immutability rules belong to a later service layer.
+- Scoring revisions are immutable and the highest committed revision is current; historical revisions remain stored.
 - Separate attempt-history and raw-upstream-payload archival tables remain deferred.
 - No authentication, multi-process rate limiting, deployment, or restart resumability. No commits were created.

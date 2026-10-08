@@ -1,6 +1,6 @@
 # Decisions and assumptions — Phase 0
 
-These record implementation choices, not original assignment requirements. Phases 1–3 implement the foundation, queued CSV ingestion, and basic enrichment engine; [current schema](database-schema.md), [CSV policy](csv-ingestion.md), [enrichment policy](enrichment-engine.md), and verification reports record evidence. Remaining resilience/scoring/UI policies are proposals. Sources are the [assignment](requirements/tierforge-requirements.md), [supplied simulator README](../enrichment_simulator/README.md), and the user's phase briefs.
+These record implementation choices, not original assignment requirements. Phases 1–6 implement the foundation, queued CSV ingestion, resilient enrichment lifecycle, and configurable scoring; [current schema](database-schema.md), [CSV policy](csv-ingestion.md), [enrichment policy](enrichment-engine.md), and verification reports record evidence. Remaining UI policies are proposals. Sources are the [assignment](requirements/tierforge-requirements.md), [supplied simulator README](../enrichment_simulator/README.md), and the user's phase briefs.
 
 ## Authority and repository placement
 
@@ -36,7 +36,7 @@ These record implementation choices, not original assignment requirements. Phase
 
 **D14 — Decimal precision and tier validation.** Store raw metrics and calculation values as PostgreSQL numeric. Accept config decimals as strings with up to two fractional digits; bars nonnegative, weights each 0–100 summing exactly to 100; `0 <= mediumMin < largeMin <= 100`. The precision and strictly ordered boundaries are implementation policies. No formula changes: each `metric >= bar` contributes exactly its weight; test Large before Medium using inclusive comparisons. The assignment's example is a useful initial form suggestion, not a mandatory default config. No scores exist until the user submits a config.
 
-**D15 — Scoring revision strategy.** Allocate immutable per-job integer revisions under the job lock. Publish the new config pointer and all successful-store scores in one set-based transaction; preserve prior revision on failure. New enrichment successes are scored with the current revision in their completion transaction through the scoring module's same SQL formula. Prior revisions remain historical snapshots, while the current one stays complete. No queue or network call in recalculation. Repeated identical submissions may create distinct revisions in core; idempotency/deduplication and history-management UI are not required.
+**D15 — Scoring revision strategy.** Allow scoring only after enrichment reaches a terminal state. Allocate immutable per-job integer revisions under the job lock and insert the config plus all successful-store scores in one set-based transaction. The highest committed revision is current; rollback leaves the prior revision current without a pointer column. Prior revisions remain historical snapshots. No queue or network call occurs during recalculation. Repeated identical submissions may create distinct revisions; idempotency/deduplication and history-management UI are not required.
 
 **D16 — Performance guardrails.** Target a sub-two-second 5,000-store recalculation on the documented development machine, with `SCORING_STATEMENT_TIMEOUT_MS=5000` and bounded lock wait. This is an unverified project target, not an assignment SLA. Short bulk SQL operations avoid one-query-per-store recalculation. A failed/timeout transaction leaves the previous scores visible. If measurement exceeds the target, inspect query plans/indexes before adding infrastructure.
 
@@ -92,3 +92,7 @@ Phase 4 replaces the temporary terminal-error behavior with typed bounded retrie
 ## Phase 5 amendments
 
 Phase 5 adds a persisted provider-failure streak, one-row-at-a-time expired-lease recovery, periodic watchdog scans, and idempotent terminal detection. Consecutive event order is the order in which accepted attempt outcomes obtain the job row lock. Success resets the streak; provider-related failures and lease expiry increment it; unrelated permanent store failures do neither. At the configured threshold, unfinished rows become skipped and the job becomes failed in one transaction. Progress counts come from one persistent snapshot, must sum to `total_stores`, and report terminal percentage using succeeded, failed, and skipped rows.
+
+## Phase 6 amendments
+
+Phase 6 accepts numeric or decimal-string configuration values with at most two decimal places, normalizes them to exact two-place strings, and validates the weight sum in integer hundredths. Scoring locks a terminal job, allocates `max(revision) + 1`, inserts its configuration, and calculates every successful store using SQL `CASE` expressions in one transaction. The highest committed revision is the current view. Failed/skipped stores are excluded even if inconsistent legacy metrics exist, and the scoring module has no enrichment-client dependency.

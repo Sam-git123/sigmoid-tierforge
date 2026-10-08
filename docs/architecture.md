@@ -1,6 +1,6 @@
 # TierForge architecture — Phase 0 proposal
 
-Status: Phase 5 worker recovery and lifecycle handling are implemented alongside the foundation, ingestion, and resilient worker flow. The fixed pool retries typed transient failures with persisted full-jitter scheduling, independent deadlines, database-derived wakeups, strict token fences, periodic lease recovery, and bounded systemic-failure termination. Scoring and dashboard flows remain future work. See [current schema](database-schema.md), [CSV policy](csv-ingestion.md), and [enrichment policy](enrichment-engine.md).
+Status: Phase 6 configurable scoring and tiering are implemented alongside the foundation, ingestion, and resilient enrichment lifecycle. Terminal jobs can publish immutable scoring revisions with exact decimal validation and one set-based PostgreSQL calculation. The frontend dashboard remains future work. See [current schema](database-schema.md), [CSV policy](csv-ingestion.md), and [enrichment policy](enrichment-engine.md).
 
 ## Authority and scope
 
@@ -112,11 +112,11 @@ The limiter regulates this application's sends, not other callers of the simulat
 
 ### Leases, fencing, and worker recovery
 
-Default lease length is 20 seconds, greater than the 8-second HTTP deadline plus admission and persistence margin. Use database wall-clock time evaluated after locks are acquired for expiry comparisons, not application clocks or a transaction-start timestamp that became stale while waiting. The planned one-second general reaper remains Phase 5 work.
+Default lease length is 20 seconds, greater than the 8-second HTTP deadline plus admission and persistence margin. Use database wall-clock time evaluated after locks are acquired for expiry comparisons, not application clocks or a transaction-start timestamp that became stale while waiting. Phase 5 implements the one-second general reaper.
 
 Every success/failure/timeout callback checks, under locks: job still `running`, store still `processing`, submitted token equals its current token, and lease remains unexpired. A guarded transition affecting zero rows means ownership was lost; return without mutating results, attempt outcome, scoring, counters, or job failure streak. Emit a diagnostic stale-response log only.
 
-For success, fence validation, raw-result insert, optional application of the published scoring config, attempt completion, and the work transition to `succeeded` share one transaction. Never insert metrics before proving ownership. A unique raw-result key on work ID is a second defense; uniqueness alone is not the fence. Error persistence and retries use the same guard.
+For success, fence validation, raw-result insert, attempt completion, and the work transition to `succeeded` share one transaction. Never insert metrics before proving ownership. A unique raw-result key on work ID is a second defense; uniqueness alone is not the fence. Error persistence and retries use the same guard. Scoring is authorized only after the job is terminal, so enrichment completion never needs to update scores.
 
 The reaper locks the job then expired rows, marks their current attempts `lease_expired`, revokes tokens, and either schedules `retry_wait` or marks `failed` when budget is exhausted. Reclaimed work is picked up by another available worker task with a **new** token. Abort the old local request where possible; correctness never depends on the abort succeeding. Both an early timeout and the reaper may race, but only the current eligible state transitions once.
 
@@ -163,9 +163,9 @@ Use PostgreSQL `numeric`, not floating-point accumulation. Accept up to two deci
 
 The assignment's example must produce A=100/Large, B=50/Medium, C=20/Small using bars 15000/150000/8000, weights 50/30/20, and boundaries 70/40. Test exact equality to bars and boundaries, plus 0 and 100.
 
-Submitting a configuration acquires the job lock, allocates a monotonically increasing revision, stores an immutable config, performs one `INSERT ... SELECT` with `CASE` expressions over all successful raw results, and updates the job's published config pointer, all in one transaction. A failed calculation rolls back the config, scores, and pointer together; the prior published revision remains visible. Core uses synchronous recalculation for 5,000 rows; measure it rather than adding another queue prematurely.
+Submitting a configuration requires a terminal job, acquires the job lock, allocates a monotonically increasing revision, stores an immutable config, and performs one `INSERT ... SELECT` with `CASE` expressions over successful enrichment rows, all in one transaction. A failed calculation rolls back the config and scores together; the highest previously committed revision remains current. Core uses synchronous recalculation for 5,000 rows rather than adding another queue prematurely.
 
-Configuration can be submitted while enrichment continues. Because completion also acquires the job lock, a success before publication is included in the bulk scan; a success after publication receives a score from the same scoring module under the current config before committing. This single-row application uses the same SQL formula definition as bulk scoring. The enrichment HTTP client never imports scoring. Older score revisions represent their original snapshots and are not retroactively populated. The current revision always covers all accepted successes when configured.
+Configuration can be submitted for `completed`, `completed_with_errors`, or `failed` jobs. Only `succeeded` work rows with persisted enrichments are scored; failed and skipped rows receive no fabricated score. The enrichment HTTP client and worker do not import scoring. Older revisions remain historical snapshots, and each committed revision covers the terminal job's successful stores.
 
 Scoring-only actions must make **zero** enrichment calls. Prove this with a dependency spy/forbidden transport in tests. Keep raw payload and typed metric columns unchanged across any number of recalculations. Before the first config, scores/tiers are null and tier counts are zero; failed/pending stores have no score, not Small by default.
 
@@ -175,7 +175,7 @@ Proposed entities and concrete column/index details are in the [implementation p
 
 - `jobs` has many `store_work` rows, each representing one uploaded store and durable work unit.
 - `store_work` has many `enrichment_attempts` and at most one accepted `enrichment_results` row.
-- `jobs` has many immutable `scoring_configs`; its nullable published-config pointer must reference a config belonging to that job.
+- `jobs` has many immutable `scoring_configs`; the highest committed revision is current without a separate pointer.
 - `scoring_configs` and successful `enrichment_results` produce `store_scores`, keyed by config and work row, with same-job foreign-key integrity.
 
 Use foreign keys, unique `(job_id, store_id)`, unique attempt numbers per work row, valid-state checks, lease-field consistency checks, positive attempt limits, weight-sum constraints, and tier/score bounds. Index due and expired work separately, and scores by config/tier/store for paginated filtering. Do not introduce a global store master: the same store ID may occur in separate sequential uploads.
@@ -189,8 +189,8 @@ Proposed endpoints, not assignment-prescribed URLs:
 - `GET /api/jobs/:jobId`: status, total, enriched, failed, pending, queued/processing/retry-wait subtotals, attempt count summary, job failure reason, config revision, and Large/Medium/Small counts.
 - `GET /api/jobs/:jobId/stores?tier=Large&status=succeeded&page=1&pageSize=50&configRevision=2`: stable store-ID/row-ID ordering, filtered count, name, original store fields, three metrics, work status, score, tier, attempt count, and last/final failure. `tier` and revision optional; restrict page size to 100. Include the effective revision in every response.
 - `GET /api/jobs/:jobId/stores/:workId`: detailed current/final error and bounded attempt history; IDs must belong to the requested job.
-- `POST /api/jobs/:jobId/scoring-configs`: bars, weights, tier thresholds; `201` with published revision, scored count, and tier counts after atomic calculation. Each accepted submission produces a new revision.
-- `GET /api/jobs/:jobId/scoring-configs/current`: published config or `{config: null}` before scoring.
+- `POST /api/jobs/:jobId/scoring`: bars, weights, tier thresholds; `201` with revision, scored count, and tier counts after atomic calculation. Each accepted submission produces a new revision.
+- `GET /api/jobs/:jobId/scoring`: highest committed configuration and summary, or a null configuration before scoring.
 - `GET /api/health`: app/database readiness, `503` on DB failure. Optional simulator `/health` is advisory; it is not proof `/enrich` will succeed.
 
 Dashboard `pending = queued + processing + retry_wait`; therefore `total = enriched + failed + pending`. Get progress and tier counts in one consistent statement/snapshot. Query stores with an explicit revision obtained from the dashboard, and discard/refetch responses for obsolete revisions after scoring mutations. Job progress can advance between polls; score/count consistency must not silently mix revisions. When configured, tier counts sum to enriched; before configuration they sum to zero and the UI says unscored. Surface failed rows even if a tier filter would otherwise exclude them, through a separate failure view/status filter.

@@ -7,7 +7,9 @@ import { createLogger } from './logging/logger.js';
 import { createHealthRepository } from './repositories/health-repository.js';
 import { createEnrichmentRepository } from './repositories/enrichment-repository.js';
 import { createJobRepository } from './repositories/job-repository.js';
+import { createScoringRepository } from './repositories/scoring-repository.js';
 import { createJobService } from './services/job-service.js';
+import { createScoringService } from './services/scoring.service.js';
 import { createCoordinator } from './workers/coordinator.js';
 import { createRateLimiter } from './workers/rate-limiter.js';
 
@@ -56,6 +58,7 @@ async function start(): Promise<void> {
     checkDatabase: repository.checkDatabase,
     jobService,
     csvMaxBytes: env.CSV_MAX_BYTES,
+    scoringService: createScoringService(createScoringRepository(pool)),
   });
   try {
     await coordinator.start();

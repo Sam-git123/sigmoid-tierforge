@@ -10,7 +10,7 @@ The requirements were copied unchanged from `enrichment_simulator/docs/requireme
 
 ## Phase and scope
 
-Implement **only the phase explicitly requested by the user**. The current authorized phase is **Phase 5: worker recovery and complete job lifecycle**. Implement expired-lease reclamation, periodic watchdog scans, deterministic terminal job states, persisted progress, and bounded job-wide systemic-failure handling. Do not implement scoring calculations or frontend dashboard functionality; later phases require a subsequent request.
+Implement **only the phase explicitly requested by the user**. The current authorized phase is **Phase 6: configurable scoring and tiering**. Implement exact configuration validation, immutable scoring revisions, set-based PostgreSQL calculation, atomic recalculation, and current-configuration APIs. Do not implement frontend dashboard functionality; later phases require a subsequent request.
 Prioritize one active enrichment job and the complete core workflow. Multiple concurrent jobs and full restart resumability are assignment bonuses. Do not add authentication, microservices, Redis, BullMQ, Kafka, Kubernetes, or distributed rate limiting to core scope.
 Never automatically stage, commit, push, or publish changes. A suggested commit message is informational only.
 
@@ -53,3 +53,7 @@ Read `docs/csv-ingestion.md` before changing uploads. CSV headers are case-sensi
 ## Phase 3–5 enrichment policy
 
 Read `docs/enrichment-engine.md` and the unchanged simulator README before changing enrichment. Send exactly the documented five request fields; retain CSV `country` locally. One six-loop in-process pool shares one monotonic 220 ms paced limiter. Claims lock the job before a pending or due retry row and commit before limiter/network waits. Every attempt-changing write requires a running job, processing state, matching token, and unexpired lease. Retry 429, 5xx, network, and timeout failures up to five total attempts with persisted full-jitter timing; invalid responses and other permanent errors fail immediately. A coordinator timer wakes at the database-derived next due time. The Phase 5 watchdog reclaims expired leases using the same lock order. Thirty consecutive accepted provider-related failures stop the job; accepted success resets the persisted streak. Systemic termination skips unfinished rows, preserves prior successes, and fences late responses.
+
+## Phase 6 scoring policy
+
+Read the scoring section of `docs/architecture.md` before changing scoring. Accept at most two decimal places and normalize validated decimal inputs to strings; validate weight totals in integer hundredths. Score only terminal jobs and only rows whose work state is succeeded. Each submission locks the job, inserts a new immutable revision, and calculates all scores with one `INSERT ... SELECT` transaction. The highest committed revision is current. Scoring must not import or call the enrichment client.
