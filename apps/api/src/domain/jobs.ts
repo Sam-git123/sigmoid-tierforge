@@ -40,6 +40,9 @@ export interface JobCounts {
 
 export interface JobProgress extends Job {
   counts: JobCounts;
+  completedStores: number;
+  unfinishedStores: number;
+  progressPercentage: number;
 }
 
 export interface CsvLimits {

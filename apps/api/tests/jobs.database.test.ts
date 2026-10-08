@@ -103,6 +103,9 @@ describe.skipIf(!connectionString)('job API with PostgreSQL', () => {
       failureCode: null,
       failureReason: null,
       counts: { pending: 1, processing: 0, retryWait: 0, succeeded: 0, failed: 0, skipped: 0 },
+      completedStores: 0,
+      unfinishedStores: 1,
+      progressPercentage: 0,
     });
   });
   it('counts each persisted state separately, including processing/retry_wait/skipped', async () => {
@@ -128,8 +131,14 @@ describe.skipIf(!connectionString)('job API with PostgreSQL', () => {
       status: 'running',
       totalStores: 6,
       counts: { pending: 1, processing: 1, retryWait: 1, succeeded: 1, failed: 1, skipped: 1 },
+      completedStores: 3,
+      unfinishedStores: 3,
+      progressPercentage: 50,
     });
     expect(response.body.startedAt).not.toBeNull();
+    expect(
+      (Object.values(response.body.counts) as number[]).reduce((sum, count) => sum + count, 0),
+    ).toBe(response.body.totalStores);
   });
   it('exposes finished timestamps and job failure reasons when persisted', async () => {
     const created = await upload();

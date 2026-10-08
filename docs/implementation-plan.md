@@ -1,6 +1,6 @@
 # TierForge implementation plan — Phase 0
 
-Phases 0–4 are implemented through bounded resilient enrichment attempts. The job-wide watchdog/general lease reaper, scoring, and dashboard work remain plans requiring later requests. See the phase verification reports and [current schema](database-schema.md). Checkboxes remain unchecked until the complete requirement has implementation evidence; Phase 4 does not claim the next phase's systemic-failure behavior.
+Phases 0–5 are implemented through worker recovery and complete enrichment job lifecycle handling. Scoring and dashboard work remain plans requiring later requests. See the phase verification reports and [current schema](database-schema.md). Checkboxes remain unchecked until the complete requirement has implementation evidence.
 
 Sources: [complete original assignment](requirements/tierforge-requirements.md), [simulator README](../enrichment_simulator/README.md), and the user's Phase 0 brief. See [architecture](architecture.md) for flow/transaction details and [decisions](decisions-and-assumptions.md) for chosen defaults. `R` identifies assignment core requirements, `Q` evaluation/quality criteria, `U` user-directed constraints, `B` assignment bonuses, and `D` implementation choices. Phase references connect each item to planned acceptance evidence.
 
@@ -10,7 +10,7 @@ Sources: [complete original assignment](requirements/tierforge-requirements.md),
 
 - [ ] **R01 — §1:** Process a large store list through enrichment and user-configurable scoring/tiering. Evidence: Phase 5 full 5,000-row exercise and dashboard; Phases 2–4 provide constituent flows.
 - [ ] **Q01 — §2 architecture/data modeling:** Separate unreliable enrichment, persisted raw data, work units, and deterministic calculated scores. Evidence: Phases 1/3/4 boundaries, schema review, and zero-network scoring test.
-- [ ] **Q02 — §2 resilience/concurrency:** Phase 4 covers per-attempt retries, timeouts, fencing, and races; Phase 5 must add watchdog/systemic evidence.
+- [x] **Q02 — §2 resilience/concurrency:** Phases 4–5 cover bounded retries, timeouts, fencing, expired-lease recovery, completion races, and systemic termination.
 - [ ] **Q03 — §2 code quality:** Readable names, consistent error handling, understandable code that can be defended in review. Evidence: each phase's focused review and final architecture walkthrough.
 - [ ] **Q04 — §2 tests:** Tests are optional in the assignment, encouraged for retry/backoff/formula/boundaries; this project's user-specified stack and plan adopt them. Evidence: Phases 3–5, single documented test command.
 - [ ] **R02 — §2/§6 scope:** Respect 2–3 days of effort and deliver core before bonuses. Evidence: phased time budget, explicit deferred scope, honest final limitations.
@@ -56,8 +56,8 @@ Sources: [complete original assignment](requirements/tierforge-requirements.md),
 
 - [ ] **R25:** End-to-end Steps 1–4 for a single job at a time. Evidence: Phases 2–5 active-job conflict test and complete core walkthrough.
 - [x] **R26 — A:** Retry transient failures with a cap. Evidence: Phase 4 uses at most five attempts, persists jittered due times, and ends with `RETRY_EXHAUSTED`.
-- [ ] **R27 — B:** Phase 4 handles ignored-abort HTTP calls and stale callbacks; Phase 5 must add general expired-lease reclamation.
-- [ ] **R28 — C:** Bound a systemically broken run and expose a clear terminal failure. Evidence: Phase 5 watchdog scenarios.
+- [x] **R27 — B:** Phase 4 handles ignored-abort HTTP calls and stale callbacks; Phase 5 conditionally reclaims expired leases and retries with new tokens.
+- [x] **R28 — C:** Phase 5 bounds a systemically broken run using a persisted consecutive provider-failure streak and exposes a clear terminal failure.
 
 ### Final deliverables — Section 7 (planned, not produced in Phase 0)
 
@@ -78,7 +78,7 @@ Sources: [complete original assignment](requirements/tierforge-requirements.md),
 
 - [ ] **U01:** React/TypeScript/Vite, Tailwind, TanStack Query, Node/TypeScript/Express, PostgreSQL/`pg`, Zod, Vitest/Supertest, pnpm workspaces, Docker Compose PostgreSQL. Phase 1 scaffold/build acceptance.
 - [x] **U02:** One store per persisted work unit; asynchronous enrichment; durable processing, retry, success, and failure states. Phases 2–4 state and persistence tests.
-- [ ] **U03:** Phase 4 covers atomic claims, fencing, bounded jittered retries, and timeout/network handling; Phase 5 must add the general lease reaper.
+- [x] **U03:** Phases 4–5 cover atomic claims, fencing, bounded jittered retries, timeout/network handling, and the general lease reaper.
 - [x] **U04:** One process-wide limiter used by the background worker module without extra queue infrastructure. Phase 4 proves initial and retry attempts share it, including provider cooldown.
 - [ ] **U05:** Separate raw enrichment from scores and enrichment module from scoring; set-based bulk scoring. Phase 6 dependency/SQL review and zero-network test.
 - [ ] **U06:** Polling dashboard; no authentication or infrastructure expansion. Phase 5 behavior/scope review.
@@ -144,7 +144,7 @@ Error envelope: `{error: {code, message, details?, requestId}}`. Invalid multipa
 
 ## Proposed folder structure
 
-This tree began as the Phase 0 target layout. The foundation, ingestion, client, repositories, and worker modules through Phase 4 now exist; watchdog, scoring, and dashboard portions remain planned.
+This tree began as the Phase 0 target layout. The foundation, ingestion, client, repositories, worker, watchdog, and lifecycle modules through Phase 5 now exist; scoring and dashboard portions remain planned.
 
 ```text
 sigmoid-tierforge/
@@ -252,11 +252,11 @@ Evidence:
 - A controlled transport ignores abort and resolves after retry success; accepted metrics remain those from the current token.
 - No worker loop sleeps through backoff and no transaction spans a rate-limit wait, backoff wait, or HTTP call.
 
-Job-wide systemic-failure termination and general expired-processing reclamation remain Phase 5.
+Job-wide systemic-failure termination and general expired-processing reclamation are implemented in Phase 5.
 
-### Phase 5 — Systemic watchdog and lease recovery (future)
+### Phase 5 — Systemic watchdog and lease recovery (implemented)
 
-Implement the independent expired-lease reaper, worker/process-interruption cleanup, bounded job-wide systemic-failure policy, and terminalization of all unfinished work. Do not conflate this watchdog with Phase 4's per-attempt logical timeout.
+Implemented the independent expired-lease reaper, periodic coordinator watchdog, bounded job-wide systemic-failure policy, persistent progress percentage, and terminalization of all unfinished work. The watchdog is separate from Phase 4's per-attempt logical timeout. Focused PostgreSQL tests cover lease recovery, final-attempt expiry, completion races, lifecycle states, systemic stop, late-result fencing, progress invariants, and active-slot release.
 
 ### Phase 6 — Scoring configuration and recalculation (future)
 

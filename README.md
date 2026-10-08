@@ -1,6 +1,6 @@
 # TierForge
 
-Phase 4 implementation for Sigmoid's resilient bulk store scoring/tiering exercise. Implemented: pnpm workspace, React shell, Express health/job API, PostgreSQL schema/migrations, bounded CSV ingestion, asynchronous enrichment workers, shared five-per-second admission, bounded persisted retries, independent HTTP deadlines, lease-fenced persistence, and persisted job progress. Scoring, the dashboard, expired-lease watchdog, and job-wide systemic-failure policy are intentionally **not implemented**.
+Phase 5 implementation for Sigmoid's resilient bulk store scoring/tiering exercise. Implemented: pnpm workspace, React shell, Express health/job API, PostgreSQL schema/migrations, bounded CSV ingestion, asynchronous enrichment workers, shared five-per-second admission, bounded persisted retries, independent HTTP deadlines, lease-fenced persistence, expired-lease recovery, systemic-failure shutdown, and persisted job progress. Scoring and the frontend dashboard are intentionally **not implemented**.
 
 ## Prerequisites
 
@@ -82,9 +82,14 @@ curl.exe http://127.0.0.1:3001/api/jobs/45dbdc13-56f4-4921-9f70-ad8ad9d69c63
     "succeeded": 0,
     "failed": 0,
     "skipped": 0
-  }
+  },
+  "completedStores": 0,
+  "unfinishedStores": 5000,
+  "progressPercentage": 0
 }
 ```
+
+`progressPercentage` is `(succeeded + failed + skipped) / totalStores * 100`, rounded to two decimal places. Pending, processing, and retry-wait rows remain unfinished.
 
 The [CSV contract](docs/csv-ingestion.md) documents header/value policy, limits, warnings, status codes, and transaction behavior. The response reflects the committed queued record, then the coordinator starts it asynchronously. A queued or running job causes `409 ACTIVE_JOB_EXISTS`; historical terminal jobs remain available.
 
@@ -125,7 +130,7 @@ The one-active-job constraint covers both `queued` and `running`. Exact NUMERIC 
 
 The API has routes, controllers, services, repositories, database modules, middleware, an enrichment client, and a worker coordinator. Six logical loops share one monotonic limiter, claim one row at a time through `FOR UPDATE SKIP LOCKED`, and never hold a transaction across limiter or network waits. The frontend has React Router, TanStack Query, Tailwind's Vite plugin, and a reusable fetch client; no upload or dashboard screen is part of this phase.
 
-Later phases will implement the remaining [planned architecture](docs/architecture.md), using the [original requirements](docs/requirements/tierforge-requirements.md). See the [implementation plan](docs/implementation-plan.md), [enrichment policy](docs/enrichment-engine.md), and [Phase 4 verification report](docs/phase-4-report.md).
+Later phases will implement the remaining [planned architecture](docs/architecture.md), using the [original requirements](docs/requirements/tierforge-requirements.md). See the [implementation plan](docs/implementation-plan.md), [enrichment policy](docs/enrichment-engine.md), and [Phase 5 verification report](docs/phase-5-report.md).
 
 ## Provided simulator
 
@@ -162,10 +167,10 @@ This fallback is specific to this workspace, not a portable replacement for Dock
 
 - Docker Compose startup is unverified in this environment; native PostgreSQL tests do not establish container startup.
 - HTTP 429/5xx, network errors, and timeouts retry up to `MAX_ATTEMPTS`; invalid responses and permanent HTTP failures do not retry. Full-jitter backoff is persisted, and valid `Retry-After` values are lower bounds for the row and shared limiter.
-- General expired-lease recovery and job-wide systemic-failure handling remain for the next phase.
-- Restart detection can resume pending rows in an active job, but it does not reclaim rows left processing by a hard stop; full restart resumability is not claimed.
+- A one-second watchdog reclaims expired processing leases. Startup resumes the single active job and eventually reclaims abandoned attempts; full multi-process or exactly-once restart semantics are not claimed.
+- Thirty consecutive accepted provider-related failures fail the job and skip unfinished rows. HTTP 401/403/404/405 stop it immediately as likely integration/configuration failures.
 - No scoring calculations or dashboard are implemented.
 - CSV upload uses bounded in-memory multipart storage (10 MiB by default) and retains validated records until its single creation transaction completes; this is deliberate for the 5,000-row take-home scope.
 - Configuration revisions and score references are schema support only; revision publication/immutability rules belong to a later service layer.
-- Attempt history, raw upstream payload archival, systemic-run state, and restart behavior from the Phase 0 proposal are deferred to later migrations if needed.
+- Separate attempt-history and raw-upstream-payload archival tables remain deferred.
 - No authentication, multi-process rate limiting, deployment, or restart resumability. No commits were created.

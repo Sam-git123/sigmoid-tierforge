@@ -84,7 +84,25 @@ export function createJobRepository(pool: Pool): JobRepository {
       const row = result.rows[0];
       if (!row) return null;
       const { pending, processing, retryWait, succeeded, failed, skipped, ...job } = row;
-      return { ...job, counts: { pending, processing, retryWait, succeeded, failed, skipped } };
+      const completedStores = succeeded + failed + skipped;
+      const unfinishedStores = pending + processing + retryWait;
+      const countedStores = completedStores + unfinishedStores;
+      if (countedStores !== job.totalStores) {
+        throw new Error(
+          `Job progress invariant violated for ${job.jobId}: expected ${job.totalStores}, counted ${countedStores}`,
+        );
+      }
+      const progressPercentage =
+        job.totalStores === 0
+          ? 100
+          : Math.round((completedStores / job.totalStores) * 10_000) / 100;
+      return {
+        ...job,
+        counts: { pending, processing, retryWait, succeeded, failed, skipped },
+        completedStores,
+        unfinishedStores,
+        progressPercentage,
+      };
     },
   };
 }

@@ -1,6 +1,6 @@
-# Phase 3–4 enrichment engine
+# Phase 3–5 enrichment engine
 
-Phase 3 adds asynchronous enrichment to durable jobs; Phase 4 adds bounded resilient attempts. The engine uses the unchanged Sigmoid simulator contract and existing Phase 1 schema. Scoring, dashboard behavior, general expired-lease reclamation, and job-wide systemic-failure handling remain outside the implemented scope.
+Phase 3 adds asynchronous enrichment to durable jobs, Phase 4 adds bounded resilient attempts, and Phase 5 adds worker recovery plus complete terminal lifecycle handling. The engine uses the unchanged Sigmoid simulator contract. Scoring and dashboard behavior remain outside the implemented scope.
 
 ## Simulator contract
 
@@ -33,8 +33,16 @@ Retryable failure moves the owned row to `retry_wait`, stores its typed error an
 
 Each HTTP operation races the complete transport promise against an independent `ENRICHMENT_TIMEOUT_MS=8000` deadline. The deadline requests abort but does not assume cancellation stopped remote work. The abandoned promise stays observed to prevent unhandled rejection. Once timeout persistence invalidates token A and retry claim B assigns a new token, any success or failure write using A returns stale without changing metrics or state.
 
-## Deferred resilience
+## Watchdog and terminal lifecycle
 
-Phase 4 does not run a general expired-processing reaper, preserve a separate per-attempt history table, or stop a systemically broken run early. A hard process stop can therefore leave processing rows that startup discovery cannot reclaim. These are explicit next-phase watchdog tasks, not implicit behavior of bounded per-attempt retries.
+Every `LEASE_REAPER_INTERVAL_MS`, the coordinator uses database time to find an expired processing lease. A short job-before-store transaction conditionally revokes its token and either schedules a full-jitter retry or records final `RETRY_EXHAUSTED`. A completion racing the watchdog can make only one valid state transition. Startup discovers the active job, and the same watchdog eventually recovers processing rows abandoned by a prior process.
+
+Accepted 429, 5xx, network, timeout, invalid-response, and lease-expiry outcomes increment `jobs.provider_failure_streak`; accepted success resets it. Store-local permanent failures neither increment nor reset the streak. HTTP 401/403/404/405 stop immediately as likely integration failures. Reaching `SYSTEMIC_FAILURE_STREAK=30` atomically fails the job, records `SYSTEMIC_PROVIDER_FAILURE`, changes unfinished rows to skipped with a clear reason, revokes their leases, and preserves existing metrics.
+
+Normal completion is `completed` when every store succeeded, `completed_with_errors` when successes coexist with terminal store failures, and `failed` when no store succeeded. A systemic stop is always failed even when it preserves earlier successes. Progress percentage is `(succeeded + failed + skipped) / total_stores * 100`; `pending`, `processing`, and `retry_wait` remain unfinished.
+
+## Remaining operational limits
+
+The implementation does not preserve a separate per-attempt history table or coordinate rate limits across multiple API processes. A hard stop is recovered after process restart and lease expiry, but exactly-once upstream delivery and multi-process failover are not claimed.
 
 The limiter is process-wide. Running multiple API processes or other callers against the same simulator would require a shared cross-process limiter to preserve a truly global guarantee; multiple application processes are outside the core topology.

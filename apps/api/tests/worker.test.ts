@@ -34,6 +34,7 @@ function repositoryWithClaims(claims: ClaimedStore[]): EnrichmentRepository {
       disposition: 'retry_wait',
       nextAttemptAt: new Date(Date.now() + 1000),
     }),
+    reclaimExpiredLease: vi.fn(),
     getNextRetryWakeup: vi.fn(),
     finishJobIfDone: vi.fn(),
   };
@@ -122,6 +123,7 @@ describe('enrichment worker', () => {
       expect.objectContaining({ storeId: 'S1', attemptCount: 1 }),
       expect.objectContaining({ code }),
       code === 'RATE_LIMITED' ? 2500 : 1000,
+      30,
     );
     expect(repository.completeStore).toHaveBeenCalledWith(
       expect.objectContaining({ storeId: 'S1', attemptCount: 2 }),
@@ -151,8 +153,10 @@ describe('enrichment worker', () => {
         code: 'RETRY_EXHAUSTED',
         message:
           'Retry attempts exhausted after 5 attempts. Last error: PROVIDER_ERROR - Enrichment API returned HTTP 500.',
+        systemicImpact: 'increment',
       },
       null,
+      30,
     );
     expect(repository.completeStore).not.toHaveBeenCalled();
   });
@@ -175,6 +179,7 @@ describe('enrichment worker', () => {
       expect.any(Object),
       expect.objectContaining({ code: 'PERMANENT_ERROR' }),
       null,
+      30,
     );
   });
 });

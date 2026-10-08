@@ -5,6 +5,7 @@ import { EnrichmentAttemptError } from '../errors/enrichment-error.js';
 import type {
   AttemptFailure,
   EnrichmentRepository,
+  SystemicFailureImpact,
 } from '../repositories/enrichment-repository.js';
 import type { RequestStartLimiter } from './rate-limiter.js';
 import { computeBackoffDelayMs } from './retry-policy.js';
@@ -18,6 +19,7 @@ interface WorkerDependencies {
   leaseDurationMs: number;
   retryBaseDelayMs: number;
   retryMaxDelayMs: number;
+  systemicFailureStreak?: number;
   random?: () => number;
   logger: Logger;
 }
@@ -33,10 +35,25 @@ function describeFailure(error: unknown): EnrichmentAttemptError {
   });
 }
 
+function systemicImpact(error: EnrichmentAttemptError): SystemicFailureImpact {
+  if (error.status !== undefined && [401, 403, 404, 405].includes(error.status)) {
+    return 'immediate';
+  }
+  if (
+    ['RATE_LIMITED', 'PROVIDER_ERROR', 'NETWORK_ERROR', 'TIMEOUT', 'INVALID_RESPONSE'].includes(
+      error.code,
+    )
+  ) {
+    return 'increment';
+  }
+  return 'none';
+}
+
 function persistedFailure(error: EnrichmentAttemptError): AttemptFailure {
   return {
     code: error.code,
     message: error.message.slice(0, 1000),
+    systemicImpact: systemicImpact(error),
   };
 }
 
@@ -47,6 +64,7 @@ function exhaustedFailure(error: EnrichmentAttemptError, attempts: number): Atte
       `Retry attempts exhausted after ${attempts} attempts. ` +
       `Last error: ${error.code} - ${error.message}`
     ).slice(0, 1000),
+    systemicImpact: systemicImpact(error),
   };
 }
 
@@ -109,6 +127,7 @@ export async function runWorker(dependencies: WorkerDependencies): Promise<void>
         claim,
         failure,
         canRetry ? retryDelay(error, claim, dependencies) : null,
+        dependencies.systemicFailureStreak ?? 30,
       );
       if (result.disposition === 'stale') {
         logger.warn({ workerId, ...correlation(claim) }, 'Stale enrichment failure discarded');
@@ -116,6 +135,11 @@ export async function runWorker(dependencies: WorkerDependencies): Promise<void>
         logger.info(
           { workerId, ...correlation(claim), nextAttemptAt: result.nextAttemptAt },
           'Enrichment retry scheduled',
+        );
+      } else if (result.disposition === 'job_failed') {
+        logger.error(
+          { workerId, ...correlation(claim) },
+          'Systemic enrichment failure stopped job',
         );
       }
       continue;

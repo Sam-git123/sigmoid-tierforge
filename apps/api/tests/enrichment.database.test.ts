@@ -552,4 +552,220 @@ describe.skipIf(!connectionString)('enrichment engine with PostgreSQL', () => {
       await coordinator.stop();
     }
   });
+
+  it('reclaims an expired lease and makes it claimable with a new token', async () => {
+    const { job, repository } = await createRunningJob(['S1']);
+    const first = await repository.claimNextStore(job.jobId, 20_000);
+    if (!first) throw new Error('Expected a claim');
+    await database.pool.query(
+      `UPDATE job_stores SET lease_expires_at = clock_timestamp() - interval '1 second'
+       WHERE job_id = $1 AND store_id = 'S1'`,
+      [job.jobId],
+    );
+    await expect(repository.reclaimExpiredLease(job.jobId, () => 0, 30)).resolves.toMatchObject({
+      disposition: 'retry_wait',
+      storeId: 'S1',
+    });
+    const second = await repository.claimNextStore(job.jobId, 20_000);
+    expect(second).toMatchObject({ storeId: 'S1', attemptCount: 2 });
+    expect(second?.leaseToken).not.toBe(first.leaseToken);
+  });
+
+  it('marks an expired final attempt failed and rejects its late completion', async () => {
+    const job = await createJobRepository(database.pool).createJobWithStores([store('S1')], 1);
+    const repository = createEnrichmentRepository(database.pool);
+    await repository.startJob(job.jobId);
+    const claim = await repository.claimNextStore(job.jobId, 20_000);
+    if (!claim) throw new Error('Expected a claim');
+    await database.pool.query(
+      `UPDATE job_stores SET lease_expires_at = clock_timestamp() - interval '1 second'
+       WHERE job_id = $1`,
+      [job.jobId],
+    );
+    const [recovered, accepted] = await Promise.all([
+      repository.reclaimExpiredLease(job.jobId, () => 0, 30),
+      repository.completeStore(claim, {
+        estimatedMonthlyFootfall: 1,
+        estimatedMonthlyRevenue: 2,
+        storeSizeSqft: 3,
+      }),
+    ]);
+    expect(recovered).toMatchObject({ disposition: 'failed', storeId: 'S1' });
+    expect(accepted).toBe(false);
+    await expect(repository.finishJobIfDone(job.jobId)).resolves.toMatchObject({
+      status: 'failed',
+      succeeded: 0,
+      failed: 1,
+    });
+    expect(
+      (
+        await database.pool.query('SELECT last_error_code FROM job_stores WHERE job_id = $1', [
+          job.jobId,
+        ])
+      ).rows[0].last_error_code,
+    ).toBe('RETRY_EXHAUSTED');
+  });
+
+  it('recovers work left processing by a silent worker through the coordinator watchdog', async () => {
+    const job = await createJobRepository(database.pool).createJobWithStores([store('S1')], 3);
+    const repository = createEnrichmentRepository(database.pool);
+    await repository.startJob(job.jobId);
+    const abandoned = await repository.claimNextStore(job.jobId, 20_000);
+    if (!abandoned) throw new Error('Expected a claim');
+    await database.pool.query(
+      `UPDATE job_stores SET lease_expires_at = clock_timestamp() - interval '1 second'
+       WHERE job_id = $1`,
+      [job.jobId],
+    );
+    const client: EnrichmentClient = {
+      enrich: vi.fn().mockResolvedValue({
+        estimatedMonthlyFootfall: 10,
+        estimatedMonthlyRevenue: 20,
+        storeSizeSqft: 30,
+      }),
+    };
+    const coordinator = createCoordinator({
+      repository,
+      client,
+      rateLimiter: { waitForSlot: vi.fn().mockResolvedValue(undefined), deferFor: vi.fn() },
+      logger,
+      concurrency: 1,
+      leaseDurationMs: 20_000,
+      leaseReaperIntervalMs: 5,
+      retryBaseDelayMs: 1,
+      retryMaxDelayMs: 10,
+      systemicFailureStreak: 30,
+      random: () => 0,
+    });
+    try {
+      await coordinator.start();
+      await waitUntil(async () => {
+        const result = await database.pool.query('SELECT status FROM jobs WHERE id = $1', [
+          job.jobId,
+        ]);
+        return result.rows[0]?.status === 'completed';
+      });
+      expect(client.enrich).toHaveBeenCalledTimes(1);
+      expect(
+        (
+          await database.pool.query(
+            'SELECT status, attempt_count FROM job_stores WHERE job_id = $1',
+            [job.jobId],
+          )
+        ).rows[0],
+      ).toEqual({ status: 'succeeded', attempt_count: 2 });
+    } finally {
+      await coordinator.stop();
+    }
+  });
+
+  it('fails a systemically broken job, preserves prior success, and fences late responses', async () => {
+    const job = await createJobRepository(database.pool).createJobWithStores(
+      [store('S1'), store('S2'), store('S3')],
+      5,
+    );
+    const repository = createEnrichmentRepository(database.pool);
+    await repository.startJob(job.jobId);
+    const first = await repository.claimNextStore(job.jobId, 20_000);
+    if (!first) throw new Error('Expected first claim');
+    expect(
+      await repository.completeStore(first, {
+        estimatedMonthlyFootfall: 10,
+        estimatedMonthlyRevenue: 20,
+        storeSizeSqft: 30,
+      }),
+    ).toBe(true);
+    const second = await repository.claimNextStore(job.jobId, 20_000);
+    const third = await repository.claimNextStore(job.jobId, 20_000);
+    if (!second || !third) throw new Error('Expected remaining claims');
+    await repository.recordAttemptFailure(
+      second,
+      { code: 'PROVIDER_ERROR', message: 'HTTP 500', systemicImpact: 'increment' },
+      1000,
+      2,
+    );
+    await expect(
+      repository.recordAttemptFailure(
+        third,
+        { code: 'NETWORK_ERROR', message: 'Connection reset', systemicImpact: 'increment' },
+        1000,
+        2,
+      ),
+    ).resolves.toEqual({ disposition: 'job_failed' });
+    expect(
+      await repository.completeStore(third, {
+        estimatedMonthlyFootfall: 999,
+        estimatedMonthlyRevenue: 999,
+        storeSizeSqft: 999,
+      }),
+    ).toBe(false);
+    const progress = await createJobRepository(database.pool).getJobProgress(job.jobId);
+    expect(progress).toMatchObject({
+      status: 'failed',
+      failureCode: 'SYSTEMIC_PROVIDER_FAILURE',
+      completedStores: 3,
+      unfinishedStores: 0,
+      progressPercentage: 100,
+      counts: { succeeded: 1, failed: 0, skipped: 2 },
+    });
+    expect(
+      (
+        await database.pool.query(
+          'SELECT count(*)::integer AS count FROM store_enrichments WHERE job_id = $1',
+          [job.jobId],
+        )
+      ).rows[0].count,
+    ).toBe(1);
+    await expect(
+      createJobRepository(database.pool).createJobWithStores([store('NEXT')], 5),
+    ).resolves.toMatchObject({ status: 'queued' });
+  });
+
+  it('does not duplicate completion writes during coordinator shutdown', async () => {
+    const job = await createJobRepository(database.pool).createJobWithStores([store('S1')], 3);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const client: EnrichmentClient = {
+      enrich: vi.fn(async () => {
+        await gate;
+        return {
+          estimatedMonthlyFootfall: 10,
+          estimatedMonthlyRevenue: 20,
+          storeSizeSqft: 30,
+        };
+      }),
+    };
+    const coordinator = createCoordinator({
+      repository: createEnrichmentRepository(database.pool),
+      client,
+      rateLimiter: { waitForSlot: vi.fn().mockResolvedValue(undefined), deferFor: vi.fn() },
+      logger,
+      concurrency: 1,
+      leaseDurationMs: 20_000,
+      leaseReaperIntervalMs: 10,
+      retryBaseDelayMs: 5,
+      retryMaxDelayMs: 20,
+      systemicFailureStreak: 30,
+    });
+    await coordinator.start();
+    await waitUntil(async () => vi.mocked(client.enrich).mock.calls.length === 1);
+    const stopping = coordinator.stop();
+    release();
+    await stopping;
+    await coordinator.stop();
+    expect(
+      (
+        await database.pool.query(
+          'SELECT count(*)::integer AS count FROM store_enrichments WHERE job_id = $1',
+          [job.jobId],
+        )
+      ).rows[0].count,
+    ).toBe(1);
+    expect(
+      (await database.pool.query('SELECT status FROM jobs WHERE id = $1', [job.jobId])).rows[0]
+        .status,
+    ).toBe('completed');
+  });
 });

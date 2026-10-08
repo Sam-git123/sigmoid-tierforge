@@ -30,7 +30,7 @@ describe.skipIf(!connectionString)('PostgreSQL foundation (isolated schema)', ()
       connectionTimeoutMillis: 3000,
       statement_timeout: 5000,
     });
-    expect(await runMigrations(pool)).toEqual(['001_foundation.sql']);
+    expect(await runMigrations(pool)).toEqual(['001_foundation.sql', '002_job_failure_streak.sql']);
   });
   afterAll(async () => {
     await pool?.end();
@@ -86,7 +86,7 @@ describe.skipIf(!connectionString)('PostgreSQL foundation (isolated schema)', ()
   });
   it('reruns migrations without changes', async () => {
     expect(await runMigrations(pool)).toEqual([]);
-    expect((await pool.query('SELECT count(*) FROM schema_migrations')).rows[0].count).toBe('1');
+    expect((await pool.query('SELECT count(*) FROM schema_migrations')).rows[0].count).toBe('2');
   });
   it('rejects duplicate stores within a job', () =>
     rollbackTest(async (client) => {

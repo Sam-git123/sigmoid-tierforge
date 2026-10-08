@@ -1,6 +1,6 @@
 # TierForge architecture — Phase 0 proposal
 
-Status: Phase 4 resilient attempts are implemented alongside the foundation, ingestion, and basic worker flow. The fixed pool now retries typed transient failures with persisted full-jitter scheduling, independent deadlines, database-derived wakeups, and strict token fences. General expired-lease recovery, systemic-failure handling, scoring, and dashboard flows remain future work. See [current schema](database-schema.md), [CSV policy](csv-ingestion.md), and [enrichment policy](enrichment-engine.md).
+Status: Phase 5 worker recovery and lifecycle handling are implemented alongside the foundation, ingestion, and resilient worker flow. The fixed pool retries typed transient failures with persisted full-jitter scheduling, independent deadlines, database-derived wakeups, strict token fences, periodic lease recovery, and bounded systemic-failure termination. Scoring and dashboard flows remain future work. See [current schema](database-schema.md), [CSV policy](csv-ingestion.md), and [enrichment policy](enrichment-engine.md).
 
 ## Authority and scope
 
@@ -120,7 +120,7 @@ For success, fence validation, raw-result insert, optional application of the pu
 
 The reaper locks the job then expired rows, marks their current attempts `lease_expired`, revokes tokens, and either schedules `retry_wait` or marks `failed` when budget is exhausted. Reclaimed work is picked up by another available worker task with a **new** token. Abort the old local request where possible; correctness never depends on the abort succeeding. Both an early timeout and the reaper may race, but only the current eligible state transitions once.
 
-No lease heartbeats in core: a single request should complete within its bounded HTTP deadline. Do not extend the lease indefinitely for a delayed upstream response. Startup marks leftover running jobs `failed` with `SERVER_RESTARTED`, fences unfinished work, and preserves successes/results; it does not resume them. That cleanup is a proposed core operational policy, while continuation after restart remains bonus scope. Graceful shutdown stops admission and attempts bounded cleanup; startup cleanup handles a hard kill.
+No lease heartbeats in core: a single request should complete within its bounded HTTP deadline. Do not extend the lease indefinitely for a delayed upstream response. Startup discovers the one queued or running job, resumes pending/due work, and lets the watchdog reclaim abandoned processing leases after expiry. This provides practical single-process recovery without claiming multi-process or exactly-once restart semantics.
 
 ```mermaid
 stateDiagram-v2
@@ -147,7 +147,7 @@ A job stores a consecutive dependency-failure streak, updated in the same serial
 
 Even jobs smaller than 30 attempts terminate: each store has a finite attempt budget. If none succeed, final job state is `failed`; if some succeed and some fail after normal exhaustion, `completed_with_errors`; if all succeed, `completed`. A systemic stop always sets the job `failed`, even when partial successes exist, and preserves those successes for inspection/scoring.
 
-Systemic termination takes the job lock, marks every unfinished row `failed` with `JOB_ABORTED_SYSTEMIC_FAILURE`, closes active attempts with a cancellation reason, clears leases/tokens, and records a job reason atomically. Original completed failures keep their reasons. Stop new local dispatches and cancel in-flight requests best-effort; any escaped response is fenced. Derive progress from work rows to avoid counter drift. When no nonterminal rows remain, finalize the job in the same ordered transaction. Multiple finalizers must be idempotent.
+Systemic termination takes the job lock, marks every unfinished row `skipped` with `JOB_ABORTED_SYSTEMIC_FAILURE`, clears leases/tokens, and records the failed job reason atomically. Original completed failures keep their reasons, and successful enrichments remain intact. New dispatch stops because claims require a running job; any escaped response is fenced. Derive progress from work rows to avoid counter drift. Multiple finalizers are idempotent.
 
 On database outage, stop dispatch because claims cannot be persisted. Do not infer success from memory. Retry connectivity with bounded operational backoff; after recovery the reaper resolves leases. No persistence guarantee is possible while PostgreSQL is unavailable; logs and health responses expose the outage. There is no promise that an already sent upstream request is called exactly once: delivery is at least once, while accepted result application is fenced to one current attempt.
 

@@ -37,8 +37,10 @@ async function start(): Promise<void> {
     logger,
     concurrency: env.WORKER_CONCURRENCY,
     leaseDurationMs: env.LEASE_DURATION_MS,
+    leaseReaperIntervalMs: env.LEASE_REAPER_INTERVAL_MS,
     retryBaseDelayMs: env.RETRY_BASE_MS,
     retryMaxDelayMs: env.RETRY_CAP_MS,
+    systemicFailureStreak: env.SYSTEMIC_FAILURE_STREAK,
   });
   const jobService = createJobService(
     createJobRepository(pool),
