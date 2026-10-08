@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import request from 'supertest';
-import { createApp } from '../src/app.js';
+import { createFoundationApp as createApp } from './helpers/app.js';
 import { createLogger } from '../src/logging/logger.js';
 
 const logger = createLogger('silent');
@@ -29,9 +29,9 @@ describe('health and HTTP infrastructure', () => {
     });
     expect(JSON.stringify(response.body)).not.toContain('private-password');
   });
-  it('has no premature job/enrichment/scoring endpoints', async () => {
+  it('has no premature enrichment/scoring endpoints', async () => {
     const app = createApp({ logger, checkDatabase: vi.fn() });
-    for (const path of ['/api/jobs', '/api/enrich', '/api/scoring']) {
+    for (const path of ['/api/enrich', '/api/scoring']) {
       const response = await request(app).post(path);
       expect(response.status).toBe(404);
       expect(response.body.error.code).toBe('NOT_FOUND');

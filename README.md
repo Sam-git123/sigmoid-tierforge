@@ -1,6 +1,6 @@
 # TierForge
 
-Phase 1 foundation for Sigmoid's resilient bulk store scoring/tiering exercise. Implemented: pnpm workspace, React shell, Express health API, validated configuration, PostgreSQL schema/migrations, and foundational tests. CSV upload, enrichment, workers, scoring execution, and dashboard screens are intentionally **not implemented**.
+Phase 2 implementation for Sigmoid's resilient bulk store scoring/tiering exercise. Implemented: pnpm workspace, React shell, Express health API, PostgreSQL schema/migrations, bounded CSV validation, atomic queued job creation, and persisted job progress. Enrichment workers, scoring execution, and dashboard screens are intentionally **not implemented**.
 
 ## Prerequisites
 
@@ -34,6 +34,60 @@ On macOS/Linux, use `cp .env.example .env` instead. Never commit `.env`.
 
 The health endpoint returns `200 {"status":"ok","database":"up"}` when a real database query succeeds, or a standard `503 DATABASE_UNAVAILABLE` error otherwise. Startup fails clearly if PostgreSQL cannot be reached. Importing the application factory starts no listeners, pools, or workers.
 
+## Job API
+
+Upload a CSV as the multipart field `file`:
+
+```powershell
+curl.exe -i -X POST http://127.0.0.1:3001/api/jobs -F "file=@stores_5000.csv;type=text/csv"
+```
+
+A valid upload returns `202`, a `Location` header, a queued job, and any extra-column warnings:
+
+```json
+{
+  "jobId": "45dbdc13-56f4-4921-9f70-ad8ad9d69c63",
+  "status": "queued",
+  "totalStores": 5000,
+  "createdAt": "2026-10-08T11:50:00.000Z",
+  "startedAt": null,
+  "finishedAt": null,
+  "failureCode": null,
+  "failureReason": null,
+  "statusUrl": "/api/jobs/45dbdc13-56f4-4921-9f70-ad8ad9d69c63",
+  "warnings": []
+}
+```
+
+Read persisted progress:
+
+```powershell
+curl.exe http://127.0.0.1:3001/api/jobs/45dbdc13-56f4-4921-9f70-ad8ad9d69c63
+```
+
+```json
+{
+  "jobId": "45dbdc13-56f4-4921-9f70-ad8ad9d69c63",
+  "status": "queued",
+  "totalStores": 5000,
+  "createdAt": "2026-10-08T11:50:00.000Z",
+  "startedAt": null,
+  "finishedAt": null,
+  "failureCode": null,
+  "failureReason": null,
+  "counts": {
+    "pending": 5000,
+    "processing": 0,
+    "retryWait": 0,
+    "succeeded": 0,
+    "failed": 0,
+    "skipped": 0
+  }
+}
+```
+
+The [CSV contract](docs/csv-ingestion.md) documents header/value policy, limits, warnings, status codes, and transaction behavior. Jobs remain queued until Phase 3 supplies a coordinator. A queued or running job causes `409 ACTIVE_JOB_EXISTS`; historical terminal jobs remain available.
+
 ## Commands
 
 - `pnpm run setup`: convenience alias for dependency installation; normal `pnpm install` remains the standard command.
@@ -57,7 +111,7 @@ pnpm test
 
 The database suite creates a random `tierforge_test_<uuid>` schema, applies the actual migration, tests real constraints/transactions/concurrency, and drops only that generated schema afterward. It does not truncate application tables or reset the public schema. Failed connectivity with a configured test URL fails the suite; an absent URL explicitly skips database tests. Do not point tests at production.
 
-Tests cover health success/failure, request IDs/error envelopes, request/environment validation, API-client behavior, schema integrity, an active-job race across independent connections, application rollback, migration rollback, migration checksum tampering, and repeat migration idempotency.
+Tests cover health success/failure, request IDs/error envelopes, request/environment validation, API-client behavior, CSV quoting/structure/limits, actual 5,000-row ingestion, schema integrity, concurrent HTTP active-job admission, transactional batch rollback, migration rollback/checksums, and repeat migration idempotency.
 
 ## Schema and migrations
 
@@ -69,13 +123,13 @@ The one-active-job constraint covers both `queued` and `running`. Exact NUMERIC 
 
 ## Architecture and boundaries
 
-The API has routes, controllers, services, repositories, database modules, middleware, and a reserved workers directory. The frontend has React Router, TanStack Query, Tailwind's Vite plugin, and a reusable fetch client returning unknown data for feature-level validation.
+The API has routes, controllers, services, repositories, database modules, middleware, and a reserved workers directory. Phase 2 keeps CSV parsing in its service, multipart bounds in middleware, transaction SQL in the job repository, and HTTP translation in the controller. The frontend has React Router, TanStack Query, Tailwind's Vite plugin, and a reusable fetch client; no upload screen is part of this phase.
 
-Later phases will implement the [planned architecture](docs/architecture.md), using the [original requirements](docs/requirements/tierforge-requirements.md). The current user-specified schema supersedes the Phase 0 proposal; see [implementation plan](docs/implementation-plan.md) and [Phase 1 verification](docs/phase-1-report.md).
+Later phases will implement the remaining [planned architecture](docs/architecture.md), using the [original requirements](docs/requirements/tierforge-requirements.md). The current user-specified schema supersedes the Phase 0 proposal; see the [implementation plan](docs/implementation-plan.md), [Phase 1 verification](docs/phase-1-report.md), and [Phase 2 verification](docs/phase-2-report.md).
 
 ## Provided simulator (later integration)
 
-Preserve the supplied service unchanged. It is not needed by Phase 1 health checks/tests. When integration is implemented, run it in a separate terminal from `enrichment_simulator/`:
+Preserve the supplied service unchanged. Job creation makes no enrichment call, so it is not needed by Phase 2 checks. When Phase 3 integration is implemented, run it in a separate terminal from `enrichment_simulator/`:
 
 ```text
 pip install -r requirements.txt
@@ -107,7 +161,8 @@ This fallback is specific to this workspace, not a portable replacement for Dock
 ## Known limitations
 
 - Docker Compose startup is unverified in this environment; native PostgreSQL tests do not establish container startup.
-- No upload, job creation/claiming, enrichment, retry/lease recovery, scoring calculations, or dashboard is implemented.
+- No job claiming, enrichment, retry/lease recovery, scoring calculations, or dashboard is implemented. Created jobs intentionally remain queued.
+- CSV upload uses bounded in-memory multipart storage (10 MiB by default) and retains validated records until its single creation transaction completes; this is deliberate for the 5,000-row take-home scope.
 - Configuration revisions and score references are schema support only; revision publication/immutability rules belong to a later service layer.
 - Attempt history, raw upstream payload archival, systemic-run state, and restart behavior from the Phase 0 proposal are deferred to later migrations if needed.
 - No authentication, multi-process rate limiting, deployment, or restart resumability. No commits were created.

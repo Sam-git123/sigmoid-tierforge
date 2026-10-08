@@ -11,6 +11,8 @@ describe('environment validation', () => {
       ENRICHMENT_TIMEOUT_MS: 10000,
       MAX_ATTEMPTS: 6,
       LEASE_DURATION_MS: 20000,
+      CSV_MAX_BYTES: 10_485_760,
+      CSV_MAX_ROWS: 10_000,
     });
   });
   it.each([
@@ -25,6 +27,9 @@ describe('environment validation', () => {
     { ...valid, LEASE_DURATION_MS: '12000' },
     { ...valid, RETRY_CAP_MS: '500' },
     { ...valid, MIN_DISPATCH_INTERVAL_MS: '100' },
+    { ...valid, CSV_MAX_BYTES: '0' },
+    { ...valid, CSV_MAX_BYTES: '52428801' },
+    { ...valid, CSV_MAX_ROWS: '100001' },
   ])('rejects invalid configuration %#', (env) => {
     expect(() => parseEnvironment(env)).toThrow('Invalid environment configuration');
   });

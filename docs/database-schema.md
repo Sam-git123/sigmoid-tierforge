@@ -1,6 +1,6 @@
 # Phase 1 database schema
 
-The Phase 1 user request supersedes the Phase 0 schema proposal. The source of executable schema truth is [001_foundation.sql](../apps/api/migrations/001_foundation.sql). This phase creates tables and constraints only, with no upload, worker, enrichment, or scoring business logic.
+The Phase 1 user request supersedes the Phase 0 schema proposal. The source of executable schema truth is [001_foundation.sql](../apps/api/migrations/001_foundation.sql). Phase 2 now uses `jobs` and `job_stores` for atomic queued job creation and persisted progress. No worker, enrichment, or scoring business logic exists yet.
 
 ## Tables and keys
 
@@ -19,7 +19,7 @@ A unique partial index on the constant 1 where job status is queued or running s
 
 Attempt counts stay between zero and max_attempts; the maximum is positive. Processing requires a nonnull token/expiry and at least one claimed attempt. Other states require null lease fields. Retry wait requires a due timestamp and an attempt count between one and max_attempts minus one; other states have no retry timestamp.
 
-These checks validate states; no claiming, token generation, retry, or state-transition service is implemented. Transactionally fencing writes and ensuring terminal jobs contain no unfinished rows remain later-phase responsibilities.
+These checks validate states. Phase 2 creates only queued jobs with pending stores, zero attempts, configured maximum attempts, and no lease. No claiming, token generation, retry, or state-transition service is implemented. Transactionally fencing writes and ensuring terminal jobs contain no unfinished rows remain later-phase responsibilities.
 
 ## Indexes
 

@@ -4,6 +4,8 @@ import { loadEnvironmentFile } from './config/load-env.js';
 import { createDatabasePool } from './db/pool.js';
 import { createLogger } from './logging/logger.js';
 import { createHealthRepository } from './repositories/health-repository.js';
+import { createJobRepository } from './repositories/job-repository.js';
+import { createJobService } from './services/job-service.js';
 
 async function start(): Promise<void> {
   loadEnvironmentFile();
@@ -20,7 +22,17 @@ async function start(): Promise<void> {
     return;
   }
 
-  const app = createApp({ logger, checkDatabase: repository.checkDatabase });
+  const jobService = createJobService(createJobRepository(pool), {
+    maxBytes: env.CSV_MAX_BYTES,
+    maxRows: env.CSV_MAX_ROWS,
+    maxAttempts: env.MAX_ATTEMPTS,
+  });
+  const app = createApp({
+    logger,
+    checkDatabase: repository.checkDatabase,
+    jobService,
+    csvMaxBytes: env.CSV_MAX_BYTES,
+  });
   const server = app.listen(env.API_PORT, '127.0.0.1', () => {
     logger.info({ port: env.API_PORT }, 'TierForge API listening');
   });

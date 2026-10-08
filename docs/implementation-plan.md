@@ -1,6 +1,6 @@
 # TierForge implementation plan — Phase 0
 
-Phase 0 is complete and Phase 1 foundation is implemented. Only Phase 1 is currently authorized; later phases remain a plan. See [Phase 1 verification](phase-1-report.md) for actual checks and the Docker limitation. The user-specified Phase 1 schema overrides the earlier proposal; see [current schema](database-schema.md). Checkboxes below remain unchecked until implementation evidence exists; writing a design does not satisfy a runtime requirement.
+Phases 0 and 1 are complete, and Phase 2 CSV ingestion and queued job creation are implemented. Only Phase 2 is currently authorized; later phases remain a plan. See the [Phase 1](phase-1-report.md) and [Phase 2](phase-2-report.md) verification reports. The user-specified Phase 1 schema overrides the earlier proposal; see [current schema](database-schema.md). Checkboxes below remain unchecked until implementation evidence exists; writing a design does not satisfy a runtime requirement.
 
 Sources: [complete original assignment](requirements/tierforge-requirements.md), [simulator README](../enrichment_simulator/README.md), and the user's Phase 0 brief. See [architecture](architecture.md) for flow/transaction details and [decisions](decisions-and-assumptions.md) for chosen defaults. `R` identifies assignment core requirements, `Q` evaluation/quality criteria, `U` user-directed constraints, `B` assignment bonuses, and `D` implementation choices. Phase references connect each item to planned acceptance evidence.
 
@@ -18,8 +18,8 @@ Sources: [complete original assignment](requirements/tierforge-requirements.md),
 
 ### Upload — Section 4, Step 1
 
-- [ ] **R04:** Upload a store CSV. Evidence: Phase 2 UI/API accepted-file flow and durable rows.
-- [ ] **R05:** Validate required headers before acceptance: `store_id`, `store_name`, `address`, `city`, `state`, `country`. Evidence: Phase 2 missing-header and invalid-file tests; clear UI errors and no partial job.
+- [x] **R04:** Upload a store CSV. Evidence: Phase 2 multipart API and durable queued job/store integration tests. A frontend upload screen is outside this phase.
+- [x] **R05:** Validate required headers before acceptance: `store_id`, `store_name`, `address`, `city`, `state`, `country`. Evidence: Phase 2 parser/API tests cover missing/duplicate headers, malformed structure, understandable errors, and no partial job.
 - [ ] **R06:** Use provided sample assets. Evidence: Phase 2 parse acceptance and Phase 5 preserved sample CSV; missing generator tracked, not silently recreated.
 
 ### Enrichment — Section 4, Step 2
@@ -205,7 +205,7 @@ Acceptance:
 - Verify requirements copy hash, relative documentation links, file inventory, required sections, and documentation-only change scope. No application tests/build can be claimed before code exists.
 - No app implementation, package installation, commits, or pushes. Stop after the documentation handoff.
 
-### Phase 1 — Workspace and persistence foundations (current authorized phase)
+### Phase 1 — Workspace and persistence foundations (completed)
 
 Create the fixed-stack workspace, environment validation, PostgreSQL Compose service/migrations, shared schemas, minimal health route, and test harness. Implement tables/constraints/indexes from this proposal; validate lock-order design in a focused DB test.
 
@@ -216,7 +216,7 @@ Acceptance:
 - Constraints reject duplicate store IDs per job, second active job, cross-job score links, invalid weights, and invalid lease/state combinations.
 - Modules import cleanly; server startup is separate from constructing the Express app for tests; simulator remains unchanged. Covers U01 and Q01 foundations.
 
-### Phase 2 — CSV intake and durable job API (2.5 hours; future)
+### Phase 2 — CSV intake and durable job API (current authorized phase, implemented)
 
 Implement bounded CSV parser, whole-file validation, transactional job/work creation, progress/store queries, and a basic upload UI.
 

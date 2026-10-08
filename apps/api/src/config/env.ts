@@ -20,6 +20,8 @@ const envSchema = z
     DB_POOL_MAX: positiveInt(10).pipe(z.number().max(100)),
     DB_CONNECTION_TIMEOUT_MS: positiveInt(3000),
     DB_STATEMENT_TIMEOUT_MS: positiveInt(5000),
+    CSV_MAX_BYTES: positiveInt(10_485_760).pipe(z.number().max(52_428_800)),
+    CSV_MAX_ROWS: positiveInt(10_000).pipe(z.number().max(100_000)),
     ENRICHMENT_API_BASE_URL: httpUrl.default('http://127.0.0.1:8000'),
     WORKER_CONCURRENCY: positiveInt(5).pipe(z.number().max(100)),
     ENRICHMENT_MAX_RPS: positiveInt(5).pipe(z.number().max(5)),

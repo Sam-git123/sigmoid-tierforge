@@ -9,7 +9,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import request from 'supertest';
 import { runMigrations } from '../src/db/migrate.js';
 import { withTransaction } from '../src/db/transaction.js';
-import { createApp } from '../src/app.js';
+import { createFoundationApp as createApp } from './helpers/app.js';
 import { createLogger } from '../src/logging/logger.js';
 import { createHealthRepository } from '../src/repositories/health-repository.js';
 

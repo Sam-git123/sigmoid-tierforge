@@ -10,7 +10,7 @@ The requirements were copied unchanged from `enrichment_simulator/docs/requireme
 
 ## Phase and scope
 
-Implement **only the phase explicitly requested by the user**. The current authorized phase is **Phase 1: project foundation and database schema only**. Implement workspace/tooling, the frontend shell, backend infrastructure/health, schema/migrations, and foundational tests. Do not implement CSV upload, enrichment, workers, scoring calculations, or dashboard functionality; later phases require a subsequent request.
+Implement **only the phase explicitly requested by the user**. The current authorized phase is **Phase 2: CSV ingestion, validation, and queued job creation only**. Implement `POST /api/jobs`, `GET /api/jobs/:jobId`, atomic job/store persistence, and their tests. Do not implement enrichment calls, workers, scoring calculations, or dashboard functionality; later phases require a subsequent request.
 Prioritize one active enrichment job and the complete core workflow. Multiple concurrent jobs and full restart resumability are assignment bonuses. Do not add authentication, microservices, Redis, BullMQ, Kafka, Kubernetes, or distributed rate limiting to core scope.
 Never automatically stage, commit, push, or publish changes. A suggested commit message is informational only.
 
@@ -45,3 +45,7 @@ Before ending each phase report requirements covered, files created/modified, ch
 ## Phase 1 schema precedence
 
 The user's Phase 1 schema replaces the Phase 0 proposal. Read `docs/database-schema.md` and the migration before changing persistence. Domain tables are jobs, job_stores, store_enrichments, scoring_configs, and store_scores. The active-job constraint covers queued and running. Later-phase architectural invariants above are targets, not claims of implemented behavior.
+
+## Phase 2 ingestion policy
+
+Read `docs/csv-ingestion.md` before changing uploads. CSV headers are case-sensitive after trimming and may be reordered. All six required values must be nonblank. Store IDs are trimmed, case-sensitive, and unique within an upload. Extra columns are ignored with a response warning, while every row must still match the full header width. A valid upload remains queued and performs no enrichment call.

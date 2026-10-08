@@ -1,6 +1,6 @@
 # TierForge architecture — Phase 0 proposal
 
-Status: Phase 1 foundation is implemented; the job/enrichment/scoring/dashboard flows below remain future design. The user-specified Phase 1 schema supersedes the original table proposal: see [current schema](database-schema.md) and [verification report](phase-1-report.md). In particular, job_stores/store_enrichments use composite job/store keys, queued and running share one active slot, and attempt history/raw-payload archival/publication state require later decisions or migrations.
+Status: Phase 2 CSV ingestion and queued job creation are implemented. Enrichment, scoring, and dashboard flows below remain future design. The user-specified Phase 1 schema supersedes the original table proposal: see [current schema](database-schema.md), [CSV policy](csv-ingestion.md), and the Phase 1/2 verification reports. In particular, job_stores/store_enrichments use composite job/store keys, queued and running share one active slot, and attempt history/raw-payload archival/publication state require later decisions or migrations.
 
 ## Authority and scope
 

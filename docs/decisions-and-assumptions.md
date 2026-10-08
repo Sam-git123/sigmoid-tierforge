@@ -1,6 +1,6 @@
 # Decisions and assumptions — Phase 0
 
-These record Phase 0 implementation choices, not original assignment requirements. Phase 1 now implements foundations only; [current schema](database-schema.md) supersedes the schema-related choices, and [verification](phase-1-report.md) records evidence. Remaining worker/scoring/UI policies are still proposals. Sources are the [assignment](requirements/tierforge-requirements.md), [supplied simulator README](../enrichment_simulator/README.md), and the user's Phase 0 brief. The assignment's exact score formula, five-request/second global limit, required resilience, and core/bonus boundary are not configurable product reinterpretations.
+These record implementation choices, not original assignment requirements. Phases 1 and 2 now implement the foundation and queued CSV ingestion; [current schema](database-schema.md), [CSV policy](csv-ingestion.md), and the verification reports record evidence. Remaining worker/scoring/UI policies are still proposals. Sources are the [assignment](requirements/tierforge-requirements.md), [supplied simulator README](../enrichment_simulator/README.md), and the user's phase briefs. The assignment's exact score formula, five-request/second global limit, required resilience, and core/bonus boundary are not configurable product reinterpretations.
 
 ## Authority and repository placement
 
@@ -76,3 +76,7 @@ These gaps do not block the requested planning deliverables. They must be checke
 ## Phase 1 amendments
 
 The latest user request selects composite store keys and the five domain tables in [database-schema.md](database-schema.md), including queued/running active jobs and skipped stores. Only schema support is implemented. Configuration is named `ENRICHMENT_API_BASE_URL` as requested in Phase 1. React Router is included. Native PostgreSQL 18 was available for verification; Docker was not available. All original assignment and simulator files remain unchanged.
+
+## Phase 2 amendments
+
+Phase 2 implements D12 and D13 through `csv-parse` and Multer. All six assignment columns are required and nonblank because each maps to a nonnullable persisted field and later enrichment input. Extra columns are ignored with an explicit warning; their header positions still count when validating row width. Files are UTF-8, at most 10 MiB and 10,000 records by default, with 65,536 characters per CSV record and at most 100 returned validation details. The entire bounded file is validated before database work, then inserted in 500-row batches within one transaction. The database partial unique index remains authoritative for simultaneous active-job submissions.
