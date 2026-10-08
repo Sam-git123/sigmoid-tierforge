@@ -1,6 +1,6 @@
-﻿# TierForge implementation plan — Phase 0
+# TierForge implementation plan — Phase 0
 
-This is a plan, not an implementation report. Only Phase 0 is authorized now. Checkboxes below remain unchecked until implementation evidence exists; writing a design does not satisfy a runtime requirement.
+Phase 0 is complete and Phase 1 foundation is implemented. Only Phase 1 is currently authorized; later phases remain a plan. See [Phase 1 verification](phase-1-report.md) for actual checks and the Docker limitation. The user-specified Phase 1 schema overrides the earlier proposal; see [current schema](database-schema.md). Checkboxes below remain unchecked until implementation evidence exists; writing a design does not satisfy a runtime requirement.
 
 Sources: [complete original assignment](requirements/tierforge-requirements.md), [simulator README](../enrichment_simulator/README.md), and the user's Phase 0 brief. See [architecture](architecture.md) for flow/transaction details and [decisions](decisions-and-assumptions.md) for chosen defaults. `R` identifies assignment core requirements, `Q` evaluation/quality criteria, `U` user-directed constraints, `B` assignment bonuses, and `D` implementation choices. Phase references connect each item to planned acceptance evidence.
 
@@ -89,9 +89,9 @@ Sources: [complete original assignment](requirements/tierforge-requirements.md),
 - [ ] **Q08:** Configurable operational defaults, structured actionable errors/logs, no false success reports. Phases 1/3/5 environment validation and failure walkthrough.
 - [ ] **Q09:** Responsive accessible forms, labels, keyboard operation, visible validation/loading/error states. Phase 5 manual checks; these are chosen quality goals, not additional assignment features.
 
-## Database schema proposal
+## Database schema proposal (historical Phase 0 design)
 
-Names/types below are proposals for Phase 1 migrations, not an implemented schema. Use generated UUID internal IDs, `timestamptz` timestamps, `text` plus check constraints for small status sets, and exact `numeric` for business values. Prefix external store identity with its job in all uniqueness rules.
+The following is retained as the historical Phase 0 proposal, not the implemented schema. The later user request takes precedence: [current Phase 1 schema](database-schema.md) documents the implemented five tables and deliberate deferrals. Use generated UUID internal IDs, `timestamptz` timestamps, `text` plus check constraints for small status sets, and exact `numeric` for business values. Prefix external store identity with its job in all uniqueness rules.
 
 ### `jobs`
 
@@ -193,7 +193,7 @@ Avoid speculative repositories/framework layers: small repositories for transact
 
 Proposed effort is 22 focused hours (roughly 2–3 working days); it is a planning estimate, not a completion promise. Full-sample network runs can proceed while final documentation is prepared. Finish each phase with evidence and known gaps. Do not automatically continue from Phase 0 into implementation.
 
-### Phase 0 — Analysis and documentation (1.5 hours; current authorized phase)
+### Phase 0 — Analysis and documentation (1.5 hours; completed)
 
 Deliver root guidance, architecture, implementation plan, and decision register; read the full assignment and simulator README; reconcile the requirements path without rewriting its contents.
 
@@ -205,7 +205,7 @@ Acceptance:
 - Verify requirements copy hash, relative documentation links, file inventory, required sections, and documentation-only change scope. No application tests/build can be claimed before code exists.
 - No app implementation, package installation, commits, or pushes. Stop after the documentation handoff.
 
-### Phase 1 — Workspace and persistence foundations (2 hours; future)
+### Phase 1 — Workspace and persistence foundations (current authorized phase)
 
 Create the fixed-stack workspace, environment validation, PostgreSQL Compose service/migrations, shared schemas, minimal health route, and test harness. Implement tables/constraints/indexes from this proposal; validate lock-order design in a focused DB test.
 

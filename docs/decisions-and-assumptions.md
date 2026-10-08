@@ -1,6 +1,6 @@
-﻿# Decisions and assumptions — Phase 0
+# Decisions and assumptions — Phase 0
 
-These are proposed implementation choices, not original assignment requirements or evidence of working software. Sources are the [assignment](requirements/tierforge-requirements.md), [supplied simulator README](../enrichment_simulator/README.md), and the user's Phase 0 brief. The assignment's exact score formula, five-request/second global limit, required resilience, and core/bonus boundary are not configurable product reinterpretations.
+These record Phase 0 implementation choices, not original assignment requirements. Phase 1 now implements foundations only; [current schema](database-schema.md) supersedes the schema-related choices, and [verification](phase-1-report.md) records evidence. Remaining worker/scoring/UI policies are still proposals. Sources are the [assignment](requirements/tierforge-requirements.md), [supplied simulator README](../enrichment_simulator/README.md), and the user's Phase 0 brief. The assignment's exact score formula, five-request/second global limit, required resilience, and core/bonus boundary are not configurable product reinterpretations.
 
 ## Authority and repository placement
 
@@ -72,3 +72,7 @@ The README supplies example payloads but does not fully specify all validation/e
 7. **Runtime compatibility:** No simulator, database, Node application, dependencies, or test suite was started in Phase 0. Documented behavior is not execution evidence. Package versions and exact future startup/test scripts remain Phase 1/5 work.
 
 These gaps do not block the requested planning deliverables. They must be checked or explicitly disclosed before claiming complete integration.
+
+## Phase 1 amendments
+
+The latest user request selects composite store keys and the five domain tables in [database-schema.md](database-schema.md), including queued/running active jobs and skipped stores. Only schema support is implemented. Configuration is named `ENRICHMENT_API_BASE_URL` as requested in Phase 1. React Router is included. Native PostgreSQL 18 was available for verification; Docker was not available. All original assignment and simulator files remain unchanged.

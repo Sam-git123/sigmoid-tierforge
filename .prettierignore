@@ -1,0 +1,10 @@
+pnpm-lock.yaml
+node_modules/
+dist/
+coverage/
+.local/
+enrichment_simulator/
+docs/requirements/
+stores_5000.csv
+tierforge-use-case.rtf
+

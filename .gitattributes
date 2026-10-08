@@ -1,0 +1,5 @@
+* text=auto eol=lf
+docs/requirements/** -text
+enrichment_simulator/** -text
+*.csv -text
+*.rtf -text

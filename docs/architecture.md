@@ -1,6 +1,6 @@
-﻿# TierForge architecture — Phase 0 proposal
+# TierForge architecture — Phase 0 proposal
 
-Status: documentation only; nothing described below is implemented or runtime-verified.
+Status: Phase 1 foundation is implemented; the job/enrichment/scoring/dashboard flows below remain future design. The user-specified Phase 1 schema supersedes the original table proposal: see [current schema](database-schema.md) and [verification report](phase-1-report.md). In particular, job_stores/store_enrichments use composite job/store keys, queued and running share one active slot, and attempt history/raw-payload archival/publication state require later decisions or migrations.
 
 ## Authority and scope
 
@@ -171,7 +171,7 @@ Scoring-only actions must make **zero** enrichment calls. Prove this with a depe
 
 ## Database relationships and integrity
 
-Proposed entities and concrete column/index details are in the [implementation plan](implementation-plan.md#database-schema-proposal).
+Proposed entities and concrete column/index details are in the [implementation plan](implementation-plan.md#database-schema-proposal-historical-phase-0-design).
 
 - `jobs` has many `store_work` rows, each representing one uploaded store and durable work unit.
 - `store_work` has many `enrichment_attempts` and at most one accepted `enrichment_results` row.

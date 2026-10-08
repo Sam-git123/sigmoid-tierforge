@@ -1,0 +1,36 @@
+# Node dependencies and package-manager caches
+node_modules/
+.pnpm-store/
+
+# Build output, test coverage, and tool caches
+dist/
+coverage/
+.vite/
+.cache/
+.eslintcache
+*.tsbuildinfo
+
+# Local configuration and database/runtime files
+# Keep the documented environment template in version control.
+.env
+.env.*
+!.env.example
+.local/
+
+# Logs
+*.log
+logs/
+
+# Python environment/cache files from running the supplied simulator
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# OS and editor temporary files
+.DS_Store
+Thumbs.db
+Desktop.ini
+*.swp
+*.swo

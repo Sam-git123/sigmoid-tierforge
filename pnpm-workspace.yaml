@@ -1,0 +1,6 @@
+packages:
+  - apps/*
+
+# Only the bundler's native binary setup needs a dependency build script.
+allowBuilds:
+  esbuild: true
