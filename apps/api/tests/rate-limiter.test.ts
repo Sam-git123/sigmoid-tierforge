@@ -44,4 +44,22 @@ describe('shared request-start rate limiter', () => {
     await waiting;
     expect(time).toBe(2000);
   });
+
+  it('rechecks a longer provider cooldown received while a caller is sleeping', async () => {
+    let time = 0;
+    let sleepCount = 0;
+    const limiter = createRateLimiter({
+      minimumIntervalMs: 220,
+      now: () => time,
+      sleep: async (milliseconds) => {
+        time += milliseconds;
+        sleepCount += 1;
+        if (sleepCount === 1) limiter.deferFor(2000);
+      },
+    });
+    await limiter.waitForSlot();
+    await limiter.waitForSlot();
+    expect(sleepCount).toBe(2);
+    expect(time).toBe(2220);
+  });
 });

@@ -124,6 +124,7 @@ describe.skipIf(!connectionString)('enrichment engine with PostgreSQL', () => {
     const { job, repository } = await createRunningJob(['S1']);
     const claimed = await repository.claimNextStore(job.jobId, 20_000);
     if (!claimed) throw new Error('Expected a claim');
+    await expect(repository.isClaimCurrent(claimed)).resolves.toBe(true);
     await database.pool.query(
       `UPDATE job_stores SET lease_expires_at = clock_timestamp() - interval '1 second'
        WHERE job_id = $1 AND store_id = 'S1'`,
@@ -136,6 +137,7 @@ describe.skipIf(!connectionString)('enrichment engine with PostgreSQL', () => {
         storeSizeSqft: 3,
       }),
     ).toBe(false);
+    await expect(repository.isClaimCurrent(claimed)).resolves.toBe(false);
     expect(
       (await database.pool.query('SELECT count(*)::int AS count FROM store_enrichments')).rows[0]
         .count,
@@ -432,6 +434,90 @@ describe.skipIf(!connectionString)('enrichment engine with PostgreSQL', () => {
           store_size_sqft: '2000.00',
         },
       ]);
+      expect(
+        (await database.pool.query('SELECT status FROM jobs WHERE id = $1', [job.jobId])).rows[0]
+          .status,
+      ).toBe('completed');
+      expect(
+        (
+          await database.pool.query(
+            'SELECT count(*)::integer AS count FROM store_enrichments WHERE job_id = $1',
+            [job.jobId],
+          )
+        ).rows[0].count,
+      ).toBe(1);
+    } finally {
+      await coordinator.stop();
+    }
+  });
+
+  it('observes a late transport failure after timeout without regressing retry success', async () => {
+    const job = await createJobRepository(database.pool).createJobWithStores([store('S1')], 3);
+    let rejectLate!: (error: Error) => void;
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockImplementationOnce(
+        () =>
+          new Promise<Response>((_resolve, reject) => {
+            rejectLate = reject;
+          }),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            store_id: 'S1',
+            estimated_monthly_footfall: 20,
+            estimated_monthly_revenue: 200,
+            store_size_sqft: 2000,
+          }),
+          { status: 200 },
+        ),
+      );
+    const coordinator = createCoordinator({
+      repository: createEnrichmentRepository(database.pool),
+      client: createEnrichmentClient({
+        baseUrl: 'http://127.0.0.1:8000',
+        timeoutMs: 10,
+        fetch: fetcher,
+      }),
+      rateLimiter: { waitForSlot: vi.fn().mockResolvedValue(undefined), deferFor: vi.fn() },
+      logger,
+      concurrency: 1,
+      leaseDurationMs: 20_000,
+      retryBaseDelayMs: 5,
+      retryMaxDelayMs: 20,
+      random: () => 1,
+    });
+    try {
+      await coordinator.start();
+      await waitUntil(async () => {
+        const result = await database.pool.query('SELECT status FROM jobs WHERE id = $1', [
+          job.jobId,
+        ]);
+        return result.rows[0]?.status === 'completed';
+      });
+      rejectLate(new Error('late connection failure'));
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(fetcher).toHaveBeenCalledTimes(2);
+      expect(
+        (
+          await database.pool.query(
+            `SELECT j.status, s.status AS store_status, s.attempt_count,
+               count(e.*)::integer AS enrichment_count,
+               max(e.estimated_monthly_footfall) AS footfall
+             FROM jobs j JOIN job_stores s ON s.job_id = j.id
+             LEFT JOIN store_enrichments e ON e.job_id = s.job_id AND e.store_id = s.store_id
+             WHERE j.id = $1 GROUP BY j.status, s.status, s.attempt_count`,
+            [job.jobId],
+          )
+        ).rows[0],
+      ).toEqual({
+        status: 'completed',
+        store_status: 'succeeded',
+        attempt_count: 2,
+        enrichment_count: 1,
+        footfall: '20.00',
+      });
     } finally {
       await coordinator.stop();
     }

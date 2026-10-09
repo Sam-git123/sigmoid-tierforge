@@ -1,6 +1,6 @@
 # TierForge architecture — Phase 0 proposal
 
-Status: Phase 8 completes the React workflow on top of the implemented foundation, ingestion, resilient enrichment lifecycle, scoring, and read APIs. Users can upload, observe persisted progress, inspect failures, configure or recalculate scoring, and explore current-revision dashboard results. See [current schema](database-schema.md), [CSV policy](csv-ingestion.md), and [enrichment policy](enrichment-engine.md).
+Status: Phase 9 verifies the complete React and Express/PostgreSQL workflow, including retry/rate-limit behavior, lease fencing and recovery, exact scoring, dashboard reads, a live simulator smoke flow, and a 5,000-row database exercise. See [requirement verification](requirements-verification.md), [Phase 9 report](phase-9-report.md), [current schema](database-schema.md), [CSV policy](csv-ingestion.md), and [enrichment policy](enrichment-engine.md).
 
 ## Authority and scope
 

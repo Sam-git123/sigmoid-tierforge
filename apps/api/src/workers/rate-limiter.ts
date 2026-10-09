@@ -28,8 +28,14 @@ export function createRateLimiter(options: RateLimiterOptions): RequestStartLimi
     },
     waitForSlot() {
       const slot = admission.then(async () => {
-        const delay = Math.max(0, nextStartAt - now());
-        if (delay > 0) await sleep(delay);
+        // A Retry-After can extend the shared cooldown while this caller is
+        // asleep. Recheck after every timer so an already queued caller cannot
+        // bypass the newer deadline.
+        while (true) {
+          const delay = Math.max(0, nextStartAt - now());
+          if (delay <= 0) break;
+          await sleep(delay);
+        }
         const startedAt = now();
         nextStartAt = startedAt + options.minimumIntervalMs;
       });

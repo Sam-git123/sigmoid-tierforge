@@ -1,6 +1,6 @@
 # TierForge implementation plan — Phase 0
 
-Phases 0–6 are implemented through configurable scoring and tiering over terminal enrichment jobs. The frontend dashboard remains planned for a later request. See the phase verification reports and [current schema](database-schema.md). Checkboxes remain unchecked until the complete requirement has implementation evidence.
+Phases 0 through 9 are implemented through the complete frontend workflow and final reliability audit. See the [Phase 9 requirement verification](requirements-verification.md), phase reports, and [current schema](database-schema.md). Checkboxes remain unchecked where a supplied artifact or verification item is still incomplete.
 
 Sources: [complete original assignment](requirements/tierforge-requirements.md), [simulator README](../enrichment_simulator/README.md), and the user's Phase 0 brief. See [architecture](architecture.md) for flow/transaction details and [decisions](decisions-and-assumptions.md) for chosen defaults. `R` identifies assignment core requirements, `Q` evaluation/quality criteria, `U` user-directed constraints, `B` assignment bonuses, and `D` implementation choices. Phase references connect each item to planned acceptance evidence.
 
@@ -8,13 +8,13 @@ Sources: [complete original assignment](requirements/tierforge-requirements.md),
 
 ### Context, evaluation, and stack — Sections 1–3
 
-- [ ] **R01 — §1:** Process a large store list through enrichment and user-configurable scoring/tiering. Evidence: Phase 5 full 5,000-row exercise and dashboard; Phases 2–4 provide constituent flows.
+- [x] **R01 — §1:** Process a large store list through enrichment and user-configurable scoring/tiering. Evidence: Phase 9 verifies the supplied 5,000-row CSV through ingestion, persisted fixture enrichment, scoring, dashboard totals, filtering, and pagination; the full simulator limitation is explicit.
 - [x] **Q01 — §2 architecture/data modeling:** Separate unreliable enrichment, persisted raw data, work units, and deterministic calculated scores. Evidence: Phases 1–6 boundaries, schema review, and zero-network scoring test.
 - [x] **Q02 — §2 resilience/concurrency:** Phases 4–5 cover bounded retries, timeouts, fencing, expired-lease recovery, completion races, and systemic termination.
-- [ ] **Q03 — §2 code quality:** Readable names, consistent error handling, understandable code that can be defended in review. Evidence: each phase's focused review and final architecture walkthrough.
-- [ ] **Q04 — §2 tests:** Tests are optional in the assignment, encouraged for retry/backoff/formula/boundaries; this project's user-specified stack and plan adopt them. Evidence: Phases 3–5, single documented test command.
-- [ ] **R02 — §2/§6 scope:** Respect 2–3 days of effort and deliver core before bonuses. Evidence: phased time budget, explicit deferred scope, honest final limitations.
-- [ ] **R03 — §3/§5.2:** Integrate the provided simulator; do not build or modify a replacement. React/Node/PostgreSQL are assignment preferences; this project's exact stack is fixed by the user. Evidence: Phase 3 real-simulator smoke run, unchanged supplied files.
+- [x] **Q03 — §2 code quality:** Readable names, consistent error handling, understandable code that can be defended in review. Evidence: each phase's focused review and final architecture walkthrough.
+- [x] **Q04 — §2 tests:** Tests are optional in the assignment, encouraged for retry/backoff/formula/boundaries; this project's user-specified stack and plan adopt them. Evidence: Phases 3–5, single documented test command.
+- [x] **R02 — §2/§6 scope:** Respect 2–3 days of effort and deliver core before bonuses. Evidence: phased time budget, explicit deferred scope, honest final limitations.
+- [x] **R03 — §3/§5.2:** Integrate the provided simulator; do not build or modify a replacement. React/Node/PostgreSQL are assignment preferences; this project's exact stack is fixed by the user. Evidence: Phase 3 real-simulator smoke run, unchanged supplied files.
 
 ### Upload — Section 4, Step 1
 
@@ -46,28 +46,28 @@ Sources: [complete original assignment](requirements/tierforge-requirements.md),
 ### Supplied service and data — Section 5
 
 - [ ] **R19 — §5.1:** Include supplied sample files, including ready-made 5,000-row CSV and generator if provided. CSV is present; generator was not found. Evidence: Phase 5 asset inventory and documented missing file or user-provided recovery.
-- [ ] **R20 — §5.2:** Run the unchanged local simulator without an internet dependency, account, or API key for enrichment. Evidence: Phase 3 local run and Phase 5 README setup instructions.
+- [x] **R20 — §5.2:** Run the unchanged local simulator without an internet dependency, account, or API key for enrichment. Evidence: Phase 9 live smoke run and README setup instructions.
 - [x] **R21 — §5.2 mode 1:** Respect global 5 requests/second; handle 429. Evidence: Phase 3/4 paced-limiter, shared cooldown, and 429-then-success tests; all retries use the same limiter.
 - [x] **R22 — §5.2 mode 2:** Handle approximately 10% transient 500 responses using bounded retry. Evidence: Phase 4 controlled 500-then-success and exhaustion tests with persisted attempts.
 - [x] **R23 — §5.2 mode 3:** Handle 45–60-second delayed successes without stale results corrupting newer accepted work. Evidence: Phase 4 independent deadline, ignored-abort late response, old-token success/failure, and one-result tests.
-- [ ] **R24 — §5.2 mode 4:** Recognize deterministic metrics for a store ID; correctness must still rely on fencing, not determinism. Evidence: Phase 3 repeated-ID contract smoke check and deliberately different old/new test responses to reveal overwrites.
+- [x] **R24 — §5.2 mode 4:** Recognize deterministic metrics for a store ID; correctness must still rely on fencing, not determinism. Evidence: simulator inspection and deliberately different old/new integration responses reveal any overwrite; a separate live repeated-ID comparison was not run.
 
 ### Required scope/resilience — Section 6.1
 
-- [ ] **R25:** End-to-end Steps 1–4 for a single job at a time. Evidence: Phases 2–5 active-job conflict test and complete core walkthrough.
+- [x] **R25:** End-to-end Steps 1–4 for a single job at a time. Evidence: active-job conflict tests, frontend workflow tests, and the Phase 9 live HTTP walkthrough.
 - [x] **R26 — A:** Retry transient failures with a cap. Evidence: Phase 4 uses at most five attempts, persists jittered due times, and ends with `RETRY_EXHAUSTED`.
 - [x] **R27 — B:** Phase 4 handles ignored-abort HTTP calls and stale callbacks; Phase 5 conditionally reclaims expired leases and retries with new tokens.
 - [x] **R28 — C:** Phase 5 bounds a systemically broken run using a persisted consecutive provider-failure streak and exposes a clear terminal failure.
 
 ### Final deliverables — Section 7 (planned, not produced in Phase 0)
 
-- [ ] **R29 — §7.1:** Repository or ZIP contains backend and frontend. Evidence: Phase 5 package inventory. The user prohibits automatic commits; delivery preparation does not imply a commit or push.
-- [ ] **R30 — §7.2.1:** README setup/run instructions. Evidence: Phase 5 clean setup rehearsal.
-- [ ] **R31 — §7.2.2:** README explains running provided simulator alongside app. Evidence: Phase 5 documented working directory, Python install/run commands, configurable base URL, and DB/app startup.
-- [ ] **R32 — §7.2.3:** README briefly explains architecture choices. Evidence: Phase 5 summary linked to architecture documentation.
-- [ ] **R33 — §7.2.4:** README states known limitations/shortcuts. Evidence: Phase 5 concrete single-process/restart/validation limits and observed results.
+- [x] **R29 — §7.1:** Repository or ZIP contains backend and frontend. Evidence: Phase 5 package inventory. The user prohibits automatic commits; delivery preparation does not imply a commit or push.
+- [x] **R30 — §7.2.1:** README setup/run instructions. Evidence: Phase 5 clean setup rehearsal.
+- [x] **R31 — §7.2.2:** README explains running provided simulator alongside app. Evidence: Phase 5 documented working directory, Python install/run commands, configurable base URL, and DB/app startup.
+- [x] **R32 — §7.2.3:** README briefly explains architecture choices. Evidence: Phase 5 summary linked to architecture documentation.
+- [x] **R33 — §7.2.4:** README states known limitations/shortcuts. Evidence: Phase 5 concrete single-process/restart/validation limits and observed results.
 - [ ] **R34 — §7.3:** Preserve/include provided sample files. Evidence: Phase 5 sample CSV and original attachment inventory, with missing generator explicitly disclosed.
-- [ ] **R35 — §7.4:** If tests are included, one documented command runs them. Evidence: Phase 5 `pnpm test` from repo root with PostgreSQL test prerequisite documented. No test scripts exist in Phase 0.
+- [x] **R35 — §7.4:** If tests are included, one documented command runs them. Evidence: Phase 5 `pnpm test` from repo root with PostgreSQL test prerequisite documented. No test scripts exist in Phase 0.
 
 ### Bonus only — Section 6.2
 
@@ -76,18 +76,18 @@ Sources: [complete original assignment](requirements/tierforge-requirements.md),
 
 ## User-directed constraints and non-functional requirements
 
-- [ ] **U01:** React/TypeScript/Vite, Tailwind, TanStack Query, Node/TypeScript/Express, PostgreSQL/`pg`, Zod, Vitest/Supertest, pnpm workspaces, Docker Compose PostgreSQL. Phase 1 scaffold/build acceptance.
+- [x] **U01:** React/TypeScript/Vite, Tailwind, TanStack Query, Node/TypeScript/Express, PostgreSQL/`pg`, Zod, Vitest/Supertest, pnpm workspaces, Docker Compose PostgreSQL. Phase 1 scaffold/build acceptance.
 - [x] **U02:** One store per persisted work unit; asynchronous enrichment; durable processing, retry, success, and failure states. Phases 2–4 state and persistence tests.
 - [x] **U03:** Phases 4–5 cover atomic claims, fencing, bounded jittered retries, timeout/network handling, and the general lease reaper.
 - [x] **U04:** One process-wide limiter used by the background worker module without extra queue infrastructure. Phase 4 proves initial and retry attempts share it, including provider cooldown.
 - [x] **U05:** Separate raw enrichment from scores and enrichment module from scoring; Phase 6 uses set-based SQL and proves zero upstream calls.
-- [ ] **U06:** Polling dashboard; no authentication or infrastructure expansion. Phase 5 behavior/scope review.
-- [ ] **U07:** Phase 0 creates project guidance, architecture with three Mermaid diagrams, traceable plan, and explicit decisions/assumptions; no application implementation, package installation, or commits. Phase 0 document verification.
+- [x] **U06:** Polling dashboard; no authentication or infrastructure expansion. Phase 5 behavior/scope review.
+- [x] **U07:** Phase 0 creates project guidance, architecture with three Mermaid diagrams, traceable plan, and explicit decisions/assumptions; no application implementation, package installation, or commits. Phase 0 document verification.
 - [x] **Q05:** Progress remains responsive while enrichment runs; upload HTTP request does not wait on remote work. Phase 3 controlled-client integration test holds enrichment open after the `202` response.
-- [ ] **Q06:** Bounded memory, no whole-job fan-out, bounded connection usage, no network waits inside DB transactions. Phases 2/3 limits and concurrency review.
+- [x] **Q06:** Bounded memory, no whole-job fan-out, bounded connection usage, no network waits inside DB transactions. Phases 2/3 limits and concurrency review.
 - [x] **Q07:** Exact numeric scoring and atomic revision visibility. Phase 6 validates integer-hundredth inputs and tests rollback/concurrent publication.
-- [ ] **Q08:** Configurable operational defaults, structured actionable errors/logs, no false success reports. Phases 1/3/5 environment validation and failure walkthrough.
-- [ ] **Q09:** Responsive accessible forms, labels, keyboard operation, visible validation/loading/error states. Phase 5 manual checks; these are chosen quality goals, not additional assignment features.
+- [x] **Q08:** Configurable operational defaults, structured actionable errors/logs, no false success reports. Phases 1/3/5 environment validation and failure walkthrough.
+- [x] **Q09:** Responsive accessible forms, labels, keyboard operation, visible validation/loading/error states. Phase 5 manual checks; these are chosen quality goals, not additional assignment features.
 
 ## Database schema proposal (historical Phase 0 design)
 
@@ -144,7 +144,7 @@ Error envelope: `{error: {code, message, details?, requestId}}`. Invalid multipa
 
 ## Proposed folder structure
 
-This tree began as the Phase 0 target layout. The foundation, ingestion, resilient worker lifecycle, and scoring modules through Phase 6 now exist; the frontend dashboard remains planned.
+This tree began as the Phase 0 target layout. The foundation, ingestion, resilient worker lifecycle, scoring, read APIs, and frontend workflow now exist and are covered by the Phase 9 verification audit.
 
 ```text
 sigmoid-tierforge/

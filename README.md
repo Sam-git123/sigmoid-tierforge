@@ -1,6 +1,6 @@
 # TierForge
 
-Phase 8 implementation for Sigmoid's resilient bulk store scoring/tiering exercise. TierForge now includes the complete React upload, progress, scoring, and analytics workflow backed by the Express/PostgreSQL APIs, resilient enrichment workers, exact configurable scoring, immutable revisions, and paginated dashboard data.
+Phase 9 implementation for Sigmoid's resilient bulk store scoring/tiering exercise. TierForge includes the complete React upload, progress, scoring, and analytics workflow backed by the Express/PostgreSQL APIs, resilient enrichment workers, exact configurable scoring, immutable revisions, paginated dashboard data, and final reliability verification.
 
 ## Prerequisites
 
@@ -194,7 +194,7 @@ pnpm test
 
 The database suite creates a random `tierforge_test_<uuid>` schema, applies the actual migration, tests real constraints/transactions/concurrency, and drops only that generated schema afterward. It does not truncate application tables or reset the public schema. Failed connectivity with a configured test URL fails the suite; an absent URL explicitly skips database tests. Do not point tests at production.
 
-Tests cover health success/failure, request IDs/error envelopes, request/environment validation, API-client behavior, CSV quoting/structure/limits, actual 5,000-row ingestion, schema integrity, concurrent HTTP active-job admission, transactional batch rollback, migration rollback/checksums, and repeat migration idempotency.
+Tests cover health success/failure, request IDs/error envelopes, request/environment validation, API-client behavior, CSV quoting/structure/limits, the supplied 5,000-row dataset, schema integrity, concurrent claims and active-job admission, transactional rollback, retry/backoff/rate admission, lease expiry and stale callbacks, scoring boundaries/revisions, dashboard reads, migration rollback/checksums, and repeat migration idempotency.
 
 ## Schema and migrations
 
@@ -208,7 +208,7 @@ The one-active-job constraint covers both `queued` and `running`. Exact NUMERIC 
 
 The API has routes, controllers, services, repositories, database modules, middleware, an enrichment client, and a worker coordinator. Six logical loops share one monotonic limiter, claim one row at a time through `FOR UPDATE SKIP LOCKED`, and never hold a transaction across limiter or network waits. The frontend uses React Router, TanStack Query, Tailwind's Vite plugin, runtime-validated API contracts, and reusable workflow components.
 
-See the [planned architecture](docs/architecture.md), [original requirements](docs/requirements/tierforge-requirements.md), [implementation plan](docs/implementation-plan.md), [enrichment policy](docs/enrichment-engine.md), and [Phase 8 verification report](docs/phase-8-report.md).
+See the [architecture](docs/architecture.md), [original requirements](docs/requirements/tierforge-requirements.md), [implementation plan](docs/implementation-plan.md), [requirement verification](docs/requirements-verification.md), [enrichment policy](docs/enrichment-engine.md), and [Phase 9 verification report](docs/phase-9-report.md).
 
 ## Provided simulator
 

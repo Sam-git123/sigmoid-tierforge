@@ -29,6 +29,7 @@ function repositoryWithClaims(claims: ClaimedStore[]): EnrichmentRepository {
     findActiveJobId: vi.fn(),
     startJob: vi.fn(),
     claimNextStore: vi.fn().mockImplementation(async () => claims.shift() ?? null),
+    isClaimCurrent: vi.fn().mockResolvedValue(true),
     completeStore: vi.fn().mockResolvedValue(true),
     recordAttemptFailure: vi.fn().mockResolvedValue({
       disposition: 'retry_wait',
@@ -80,8 +81,24 @@ describe('enrichment worker', () => {
     await runWorker(workerOptions(repository, client, rateLimiter));
     expect(repository.claimNextStore).toHaveBeenCalledTimes(3);
     expect(rateLimiter.waitForSlot).toHaveBeenCalledTimes(2);
+    expect(repository.isClaimCurrent).toHaveBeenCalledTimes(2);
     expect(client.enrich).toHaveBeenCalledTimes(2);
     expect(repository.completeStore).toHaveBeenCalledTimes(2);
+    expect(repository.recordAttemptFailure).not.toHaveBeenCalled();
+  });
+
+  it('does not dispatch a claim that expires while waiting for rate admission', async () => {
+    const repository = repositoryWithClaims([claim('S1')]);
+    vi.mocked(repository.isClaimCurrent).mockResolvedValue(false);
+    const client: EnrichmentClient = {
+      enrich: vi.fn(),
+    };
+    const rateLimiter = limiter();
+    await runWorker(workerOptions(repository, client, rateLimiter));
+    expect(rateLimiter.waitForSlot).toHaveBeenCalledOnce();
+    expect(repository.isClaimCurrent).toHaveBeenCalledOnce();
+    expect(client.enrich).not.toHaveBeenCalled();
+    expect(repository.completeStore).not.toHaveBeenCalled();
     expect(repository.recordAttemptFailure).not.toHaveBeenCalled();
   });
 

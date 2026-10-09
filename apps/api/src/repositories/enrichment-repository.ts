@@ -35,6 +35,7 @@ export interface EnrichmentRepository {
   findActiveJobId(): Promise<string | null>;
   startJob(jobId: string): Promise<boolean>;
   claimNextStore(jobId: string, leaseDurationMs: number): Promise<ClaimedStore | null>;
+  isClaimCurrent(claim: ClaimedStore): Promise<boolean>;
   completeStore(claim: ClaimedStore, metrics: EnrichmentMetrics): Promise<boolean>;
   recordAttemptFailure(
     claim: ClaimedStore,
@@ -198,6 +199,17 @@ export function createEnrichmentRepository(pool: Pool): EnrichmentRepository {
         );
         return claimed.rows[0] ?? null;
       });
+    },
+
+    async isClaimCurrent(claim) {
+      const result = await pool.query(
+        `SELECT 1 FROM jobs j JOIN job_stores s ON s.job_id = j.id
+         WHERE j.id = $1 AND j.status = 'running'
+           AND s.store_id = $2 AND s.status = 'processing'
+           AND s.lease_token = $3 AND s.lease_expires_at > clock_timestamp()`,
+        [claim.jobId, claim.storeId, claim.leaseToken],
+      );
+      return result.rowCount === 1;
     },
 
     async completeStore(claim, metrics) {

@@ -10,7 +10,7 @@ The requirements were copied unchanged from `enrichment_simulator/docs/requireme
 
 ## Phase and scope
 
-Implement **only the phase explicitly requested by the user**. The current authorized phase is **Phase 8: complete React frontend**. Implement the four-step upload, enrichment progress, scoring, and dashboard workflow against real backend APIs. Do not add backend features, deployment infrastructure, or bonus scope.
+Implement **only the phase explicitly requested by the user**. The current authorized phase is **Phase 9: testing, reliability verification, and correctness improvements**. Audit the completed application against the original brief, add missing high-value verification, and make only fixes supported by that audit. Do not add unrelated product features, deployment infrastructure, or bonus scope.
 Prioritize one active enrichment job and the complete core workflow. Multiple concurrent jobs and full restart resumability are assignment bonuses. Do not add authentication, microservices, Redis, BullMQ, Kafka, Kubernetes, or distributed rate limiting to core scope.
 Never automatically stage, commit, push, or publish changes. A suggested commit message is informational only.
 
@@ -65,3 +65,7 @@ Read APIs expose camelCase JSON while retaining exact PostgreSQL NUMERIC values 
 ## Phase 8 frontend policy
 
 The browser workflow uses URL-scoped job IDs and TanStack Query for all server state. Poll job progress about every two seconds only while queued/running, then stop. Client CSV and scoring checks provide early feedback but never replace backend validation. Runtime-validate API responses, preserve exact decimal strings until display, and never invent metrics, progress, speed, or ETA values. Tier filters and pagination call the server. Keep loading, error, empty, partial-failure, unscored, and no-success states explicit and accessible.
+
+## Phase 9 verification policy
+
+Trace every mandatory item in the original brief to source and evidence in `docs/requirements-verification.md`. Prefer deterministic unit tests for clocks, jitter, backoff, timeouts, and rate admission; use real PostgreSQL for ownership, fencing, rollback, constraints, scoring publication, and concurrency. A live smoke flow must use the unchanged supplied simulator, while the 5,000-row verification may use deterministic persisted fixtures if the exact limitation is reported. Keep `pnpm test` as the single documented suite and require an isolated disposable PostgreSQL target through `TEST_DATABASE_URL`.

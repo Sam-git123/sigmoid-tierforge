@@ -106,6 +106,10 @@ export async function runWorker(dependencies: WorkerDependencies): Promise<void>
     let metrics: EnrichmentMetrics;
     try {
       await rateLimiter.waitForSlot();
+      if (!(await repository.isClaimCurrent(claim))) {
+        logger.warn({ workerId, ...correlation(claim) }, 'Expired or revoked claim not dispatched');
+        continue;
+      }
       logger.info({ workerId, ...correlation(claim) }, 'Enrichment attempt started');
       metrics = await client.enrich(claim);
     } catch (cause) {

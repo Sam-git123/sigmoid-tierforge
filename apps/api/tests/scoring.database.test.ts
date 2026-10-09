@@ -1,13 +1,16 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import request from 'supertest';
 import { createApp } from '../src/app.js';
+import type { EnrichmentClient } from '../src/clients/enrichment-client.js';
 import type { StoreInput } from '../src/domain/jobs.js';
 import { createLogger } from '../src/logging/logger.js';
 import { createHealthRepository } from '../src/repositories/health-repository.js';
+import { createEnrichmentRepository } from '../src/repositories/enrichment-repository.js';
 import { createJobRepository } from '../src/repositories/job-repository.js';
 import { createScoringRepository } from '../src/repositories/scoring-repository.js';
 import { createJobService } from '../src/services/job-service.js';
 import { createScoringService } from '../src/services/scoring.service.js';
+import { createCoordinator } from '../src/workers/coordinator.js';
 import { createTestDatabase } from './helpers/test-database.js';
 
 const connectionString = process.env.TEST_DATABASE_URL;
@@ -32,6 +35,15 @@ function store(storeId: string): StoreInput {
     state: 'State',
     country: 'Country',
   };
+}
+
+async function waitUntil(check: () => Promise<boolean>, timeoutMs = 2000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await check()) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error('Timed out waiting for enrichment completion');
 }
 
 describe.skipIf(!connectionString)('scoring with PostgreSQL', () => {
@@ -163,6 +175,54 @@ describe.skipIf(!connectionString)('scoring with PostgreSQL', () => {
       { config_revision: 1, count: 3 },
       { config_revision: 2, count: 3 },
     ]);
+  });
+
+  it('never calls enrichment again when scoring and rescoring persisted results', async () => {
+    const job = await createJobRepository(database.pool).createJobWithStores([store('ONLY')], 3);
+    const client: EnrichmentClient = {
+      enrich: vi.fn().mockResolvedValue({
+        estimatedMonthlyFootfall: 40000,
+        estimatedMonthlyRevenue: 400000,
+        storeSizeSqft: 18000,
+      }),
+    };
+    const coordinator = createCoordinator({
+      repository: createEnrichmentRepository(database.pool),
+      client,
+      rateLimiter: { waitForSlot: vi.fn().mockResolvedValue(undefined), deferFor: vi.fn() },
+      logger,
+      concurrency: 1,
+      leaseDurationMs: 20_000,
+      retryBaseDelayMs: 5,
+      retryMaxDelayMs: 20,
+      systemicFailureStreak: 30,
+    });
+    try {
+      await coordinator.start();
+      await waitUntil(async () => {
+        const result = await database.pool.query('SELECT status FROM jobs WHERE id = $1', [
+          job.jobId,
+        ]);
+        return result.rows[0]?.status === 'completed';
+      });
+      expect(client.enrich).toHaveBeenCalledTimes(1);
+      await request(app()).post(`/api/jobs/${job.jobId}/scoring`).send(configuration).expect(201);
+      await request(app())
+        .post(`/api/jobs/${job.jobId}/scoring`)
+        .send({ ...configuration, footfallBar: 50000 })
+        .expect(201);
+      expect(client.enrich).toHaveBeenCalledTimes(1);
+      expect(
+        (
+          await database.pool.query(
+            'SELECT count(*)::integer AS count FROM scoring_configs WHERE job_id = $1',
+            [job.jobId],
+          )
+        ).rows[0].count,
+      ).toBe(2);
+    } finally {
+      await coordinator.stop();
+    }
   });
 
   it('rolls back a failed recalculation and leaves the prior revision current', async () => {

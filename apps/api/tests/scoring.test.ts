@@ -86,6 +86,27 @@ describe('exact scoring formula', () => {
     ).toEqual({ score: 100, tier: 'Large' });
   });
 
+  it('classifies exact 40 as Medium and exact 70 as Large', () => {
+    const boundaryConfiguration: ScoringConfiguration = {
+      ...configuration,
+      footfallWeight: '40.00',
+      revenueWeight: '30.00',
+      sizeWeight: '30.00',
+    };
+    expect(
+      calculateStoreScore(
+        { estimatedMonthlyFootfall: 15000, estimatedMonthlyRevenue: 0, storeSizeSqft: 0 },
+        boundaryConfiguration,
+      ),
+    ).toEqual({ score: 40, tier: 'Medium' });
+    expect(
+      calculateStoreScore(
+        { estimatedMonthlyFootfall: 15000, estimatedMonthlyRevenue: 150000, storeSizeSqft: 0 },
+        boundaryConfiguration,
+      ),
+    ).toEqual({ score: 70, tier: 'Large' });
+  });
+
   it('allows a zero-weight metric without adding to the score', () => {
     expect(
       calculateStoreScore(
