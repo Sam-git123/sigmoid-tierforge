@@ -1,6 +1,6 @@
 # TierForge requirement verification
 
-This Phase 9 checklist uses the requirement IDs established in `implementation-plan.md`. “Verified” means the behavior has automated evidence or was directly inspected during Phase 9. Command results and test limitations are in `phase-9-report.md`.
+This final checklist uses the requirement IDs established in `implementation-plan.md`. “Verified” means the behavior has automated evidence or direct inspection from the Phase 9 reliability audit and Phase 10 submission review. Command results and limitations are in `phase-9-report.md` and `phase-10-report.md`.
 
 ## Context, evaluation, and stack
 
@@ -60,7 +60,7 @@ This Phase 9 checklist uses the requirement IDs established in `implementation-p
 ### R08 — Persist the three enrichment metrics
 
 - **Status:** Implemented and verified.
-- **Source:** `enrichment-client.ts`, `enrichment-repository.ts`, and migration `001_initial_schema.sql`.
+- **Source:** `enrichment-client.ts`, `enrichment-repository.ts`, and migration `001_foundation.sql`.
 - **Tests:** `enrichment-client.test.ts`, `enrichment.database.test.ts`, and `database.test.ts`.
 - **Limitation:** Raw upstream response payloads and attempt-history rows are not separately retained.
 
@@ -187,7 +187,7 @@ This Phase 9 checklist uses the requirement IDs established in `implementation-p
 ### R25 — Complete Steps 1–4 for one job at a time
 
 - **Status:** Implemented and live-verified.
-- **Source:** complete API and React workflow; active-job uniqueness in migration `001_initial_schema.sql`.
+- **Source:** complete API and React workflow; active-job uniqueness in migration `001_foundation.sql`.
 - **Tests:** `jobs.database.test.ts`, `workflow.test.tsx`, and the Phase 9 live upload → enrich → score → dashboard → rescore smoke flow.
 - **Limitation:** The live smoke interacted through HTTP and verified the served frontend root; browser clicks were not repeated with automation.
 

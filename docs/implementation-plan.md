@@ -1,6 +1,6 @@
 # TierForge implementation plan — Phase 0
 
-Phases 0 through 9 are implemented through the complete frontend workflow and final reliability audit. See the [Phase 9 requirement verification](requirements-verification.md), phase reports, and [current schema](database-schema.md). Checkboxes remain unchecked where a supplied artifact or verification item is still incomplete.
+Phases 0 through 10 are implemented through the complete frontend workflow, reliability audit, and final submission preparation. See the [requirement verification](requirements-verification.md), [implemented architecture](architecture.md), phase reports, and [current schema](database-schema.md). Checkboxes remain unchecked where a supplied artifact or verification item is still incomplete.
 
 Sources: [complete original assignment](requirements/tierforge-requirements.md), [simulator README](../enrichment_simulator/README.md), and the user's Phase 0 brief. See [architecture](architecture.md) for flow/transaction details and [decisions](decisions-and-assumptions.md) for chosen defaults. `R` identifies assignment core requirements, `Q` evaluation/quality criteria, `U` user-directed constraints, `B` assignment bonuses, and `D` implementation choices. Phase references connect each item to planned acceptance evidence.
 

@@ -1,6 +1,6 @@
 # Phase 3–5 enrichment engine
 
-Phase 3 adds asynchronous enrichment to durable jobs, Phase 4 adds bounded resilient attempts, and Phase 5 adds worker recovery plus complete terminal lifecycle handling. The engine uses the unchanged Sigmoid simulator contract. Scoring and dashboard behavior remain outside the implemented scope.
+Phase 3 added asynchronous enrichment to durable jobs, Phase 4 added bounded resilient attempts, and Phase 5 added worker recovery plus complete terminal lifecycle handling. The engine uses the unchanged Sigmoid simulator contract. Scoring, dashboard reads, and the frontend are implemented in their separate modules and documented in the main architecture guide.
 
 ## Simulator contract
 

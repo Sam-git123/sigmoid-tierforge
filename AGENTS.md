@@ -10,7 +10,7 @@ The requirements were copied unchanged from `enrichment_simulator/docs/requireme
 
 ## Phase and scope
 
-Implement **only the phase explicitly requested by the user**. The current authorized phase is **Phase 9: testing, reliability verification, and correctness improvements**. Audit the completed application against the original brief, add missing high-value verification, and make only fixes supported by that audit. Do not add unrelated product features, deployment infrastructure, or bonus scope.
+Implement **only the phase explicitly requested by the user**. The current authorized phase is **Phase 10: final submission preparation**. Align the README and architecture documents with the implemented system, remove verified dead or generated material, audit environment safety, add interview notes, and execute the final verification. Do not add unrelated product features, deployment infrastructure, or bonus scope.
 Prioritize one active enrichment job and the complete core workflow. Multiple concurrent jobs and full restart resumability are assignment bonuses. Do not add authentication, microservices, Redis, BullMQ, Kafka, Kubernetes, or distributed rate limiting to core scope.
 Never automatically stage, commit, push, or publish changes. A suggested commit message is informational only.
 
@@ -69,3 +69,7 @@ The browser workflow uses URL-scoped job IDs and TanStack Query for all server s
 ## Phase 9 verification policy
 
 Trace every mandatory item in the original brief to source and evidence in `docs/requirements-verification.md`. Prefer deterministic unit tests for clocks, jitter, backoff, timeouts, and rate admission; use real PostgreSQL for ownership, fencing, rollback, constraints, scoring publication, and concurrency. A live smoke flow must use the unchanged supplied simulator, while the 5,000-row verification may use deterministic persisted fixtures if the exact limitation is reported. Keep `pnpm test` as the single documented suite and require an isolated disposable PostgreSQL target through `TEST_DATABASE_URL`.
+
+## Phase 10 submission policy
+
+Submission documentation must describe the implemented five-table schema and single-process topology, not proposal-era attempt tables or bonus behavior. Keep the supplied simulator and sample files unchanged. State exactly which checks ran, retain explicit limits for one active job and process-local rate admission, and do not present practical lease recovery as the bonus guarantee of full restart resumability.
