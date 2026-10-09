@@ -2,7 +2,7 @@ import { performance } from 'node:perf_hooks';
 
 export interface RequestStartLimiter {
   waitForSlot(): Promise<void>;
-  deferFor(milliseconds: number): void;
+  deferFor(milliseconds: number): Promise<void>;
 }
 
 interface RateLimiterOptions {
@@ -14,8 +14,8 @@ interface RateLimiterOptions {
 const defaultSleep = (milliseconds: number) =>
   new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
 
-// Serializing admission gives every caller one process-wide start time. Requiring a
-// minimum interval greater than 1000 / maxRps guarantees the rolling-window limit.
+// Deterministic in-memory implementation used by focused worker/unit tests. The
+// server runtime uses distributed-rate-limiter.ts for cross-process admission.
 export function createRateLimiter(options: RateLimiterOptions): RequestStartLimiter {
   const now = options.now ?? performance.now.bind(performance);
   const sleep = options.sleep ?? defaultSleep;
@@ -23,7 +23,7 @@ export function createRateLimiter(options: RateLimiterOptions): RequestStartLimi
   let admission = Promise.resolve();
 
   return {
-    deferFor(milliseconds) {
+    async deferFor(milliseconds) {
       nextStartAt = Math.max(nextStartAt, now() + Math.max(0, milliseconds));
     },
     waitForSlot() {

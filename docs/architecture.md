@@ -2,9 +2,9 @@
 
 ## Scope and authority
 
-This document describes the implemented Phase 10 system. The [original Sigmoid assignment](requirements/tierforge-requirements.md) defines required behavior; the [supplied simulator README](../enrichment_simulator/README.md) defines the external HTTP contract. The executable database schema is the ordered SQL in `apps/api/migrations/`.
+This document describes the implemented core plus both assignment bonuses. The [original Sigmoid assignment](requirements/tierforge-requirements.md) defines required behavior; the [supplied simulator README](../enrichment_simulator/README.md) defines the external HTTP contract. The executable database schema is the ordered SQL in `apps/api/migrations/`.
 
-TierForge processes one active enrichment job at a time. A single Node.js API process owns six logical worker loops and one shared request-start limiter. PostgreSQL stores application data and durable work state. Multiple active jobs, multiple API replicas, and the assignment’s full restart-resumability bonus are not part of the implemented core.
+TierForge processes multiple active enrichment jobs through a bounded shared worker pool. PostgreSQL stores application data, durable work state, fair job-scheduling metadata, and a singleton request-rate state. Separate Node.js API/worker processes coordinate claims, total live leases, request starts, cooldowns, recovery, and finalization through the same database.
 
 ## Components
 
@@ -13,12 +13,12 @@ flowchart LR
     User[Browser user] --> Web[React and Vite frontend]
     Web -->|JSON and multipart HTTP| API[Express routes and controllers]
 
-    subgraph Process[One Node.js API process]
+    subgraph Process[Each Node.js API process]
         API --> JobService[CSV and job service]
         API --> ReadService[Job and dashboard services]
         API --> ScoreService[Scoring service]
         Coordinator[Worker coordinator and watchdog] --> Workers[Six logical worker loops]
-        Workers --> Limiter[Shared request-start limiter]
+        Workers --> Limiter[PostgreSQL distributed limiter]
         Limiter --> Client[Enrichment HTTP client]
     end
 
@@ -27,6 +27,7 @@ flowchart LR
     ScoreService --> Repositories
     Coordinator --> Repositories
     Repositories <--> DB[(PostgreSQL)]
+    Limiter <--> DB
     Client -->|POST /enrich| Simulator[Supplied FastAPI simulator]
 ```
 
@@ -101,7 +102,7 @@ erDiagram
     }
 ```
 
-A partial unique index over queued and running `jobs` enforces the single-active-job rule at the database level. Composite primary and foreign keys keep stores, enrichments, configurations, and scores within the same job. Check constraints enforce states, lease-field consistency, retry eligibility, nonnegative metrics, weight totals, threshold ordering, score bounds, and valid tiers.
+Migration `003_concurrent_jobs_and_global_rate_limit.sql` removes only the old single-active-job index, adds `jobs.scheduler_last_claimed_at` for fair selection, and creates the singleton `enrichment_rate_limit` coordination row. Composite primary and foreign keys keep stores, enrichments, configurations, and scores within the same job. Check constraints enforce states, lease-field consistency, retry eligibility, nonnegative metrics, weight totals, threshold ordering, score bounds, and valid tiers.
 
 `job_stores` is both the original store record and the durable unit of work. There is no separate attempt-history table. It retains only the current workflow state, total attempt count, current lease, next retry time, and last error. `store_enrichments` contains at most one accepted metric set per job/store. Scoring configurations and scores retain immutable revisions; the highest committed revision is current.
 
@@ -109,7 +110,7 @@ A partial unique index over queued and running `jobs` enforces the single-active
 
 `POST /api/jobs` accepts a multipart field named `file`. Multer applies the configured byte limit before parsing. `csv-parse` handles UTF-8, quoted commas and newlines, CRLF/LF, and empty lines. The service trims surrounding whitespace, requires the six case-sensitive headers, rejects duplicate headers, validates every required value, rejects duplicate store IDs, and ignores documented extra columns with a warning.
 
-After complete validation, one transaction inserts a queued `jobs` row and batches `job_stores` inserts in groups of 500. Any insert failure rolls back the job and all store rows. Concurrent submissions are resolved by the active-job unique index rather than a read-before-write check. The API returns HTTP 202 only after the transaction commits, then notifies the coordinator asynchronously.
+After complete validation, one transaction inserts a queued `jobs` row and batches `job_stores` inserts in groups of 500. Any insert failure rolls back the job and all store rows. Concurrent submissions commit as independent jobs. The API returns HTTP 202 only after its transaction commits, then notifies the local coordinator asynchronously; other processes also discover the job through bounded polling.
 
 ## Enrichment lifecycle
 
@@ -158,11 +159,11 @@ A claim transaction follows one lock order: lock the job row, then select one el
 
 The transaction commits before rate-limit waiting or network I/O. Two database connections cannot own the same store because the selected row remains locked until its ownership update commits; `SKIP LOCKED` lets another worker select different eligible work instead of blocking on it.
 
-### Shared request rate and concurrency
+### Shared request rate, concurrency, and fairness
 
-Concurrency and request rate serve different purposes. Six worker loops allow other stores to progress while an HTTP call is waiting, but every initial request and retry passes through one process-wide limiter. Admission is serialized and request starts are separated by at least 220 ms, so this deployment starts no more than five requests in any rolling 1,000 ms window and accumulates no burst credit.
+Concurrency and request rate serve different purposes. Each process creates `WORKER_CONCURRENCY` loops, but the short global-claim transaction takes a PostgreSQL advisory transaction lock and counts valid processing leases before granting another claim. This makes the configured processing cap database-wide. It selects the active job with the oldest `scheduler_last_claimed_at`, starts queued jobs transactionally, and updates that timestamp on every claim, giving continuously eligible jobs round-robin service without one pool per job.
 
-The limiter rechecks its deadline after every sleep. If a request receives a valid `Retry-After`, queued callers observe the extended process-wide cooldown. Immediately after limiter admission, the worker confirms its claimed token is still current and unexpired before sending the request.
+Every initial request and retry then passes through the singleton `enrichment_rate_limit` row. A short transaction locks that row and either reserves a database-time start at least 220 ms after the prior reservation or commits and sleeps before trying again. No transaction or connection is held while waiting. Separate processes therefore share one five-per-second rolling budget and one provider cooldown. A crashed process may conservatively waste a reserved slot but cannot mint an extra slot. Immediately after admission, the worker confirms its claim is still current and unexpired before dispatch.
 
 ### Retry and recovery flow
 
@@ -185,7 +186,7 @@ stateDiagram-v2
 
 HTTP 429, HTTP 5xx, network failures, and logical timeouts are retryable. Non-429 4xx responses and invalid success payloads are permanent for the store; 401, 403, 404, and 405 also trigger immediate systemic termination because they indicate likely configuration or contract failure.
 
-Retry delay uses full jitter from zero through `min(RETRY_CAP_MS, RETRY_BASE_MS × 2^(attempt-1))`. A valid `Retry-After` is a lower bound up to `MAX_UPSTREAM_COOLDOWN_MS`, preventing an untrusted header from leaving a job dormant indefinitely. The selected database-time `next_attempt_at` is persisted, so retry waiting survives coordinator cycles and consumes no worker promise or connection.
+Retry delay uses full jitter from zero through `min(RETRY_CAP_MS, RETRY_BASE_MS × 2^(attempt-1))`. A valid `Retry-After` is a lower bound up to `MAX_UPSTREAM_COOLDOWN_MS`, preventing an untrusted header from leaving a job dormant indefinitely. The selected database-time `next_attempt_at` is persisted, so retry waiting survives coordinator cycles and process restarts and consumes no worker promise or connection.
 
 Each request races the entire Fetch operation, including body parsing, against `ENRICHMENT_TIMEOUT_MS`. Abort is requested at timeout, but correctness does not assume the remote operation stops. The worker loop can continue while the abandoned promise remains observed to prevent unhandled rejection.
 
@@ -236,7 +237,7 @@ Each submission locks a terminal job, assigns the next revision, inserts its con
 
 Job details aggregate all six store states in one SQL snapshot. Dashboard tier counts join only the highest committed scoring revision; unscored stores are not counted as Small. Store and failure endpoints use stable `store_id` ordering and server-side pagination. Tier filtering and its total count occur in PostgreSQL, not after fetching a page. Store pages use a repeatable-read transaction so records and totals agree.
 
-The React application runtime-validates API responses with Zod, preserves decimal strings until display, and exposes loading, validation, failure, unscored, empty, and partial-success states. Job IDs are part of the URL, allowing refresh and local sharing.
+The React application runtime-validates API responses with Zod, preserves decimal strings until display, and exposes loading, validation, failure, unscored, empty, and partial-success states. Job IDs are part of the URL, allowing refresh and local sharing. The upload page lists the 50 most recent jobs and permits another upload while existing jobs run.
 
 ## Error handling and security
 
@@ -253,19 +254,19 @@ API errors use this envelope:
 }
 ```
 
-Controllers use 400/413/415/422 for malformed uploads or input, 404 for unknown jobs/routes, 409 for the active-job conflict, 503 for database readiness failure, and 500 for unexpected errors. Persisted store failures remain data in successful read responses.
+Controllers use 400/413/415/422 for malformed uploads or input, 404 for unknown jobs/routes, 503 for database readiness failure, and 500 for unexpected errors. Persisted store failures remain data in successful read responses.
 
 All application SQL uses parameters. Environment input is validated before startup. Validation errors expose field names rather than credential-bearing values. Pino logs structured identifiers and outcomes while redacting password, database URL, and authorization fields; error middleware does not return stacks or raw upstream response bodies. `.env`, local databases, logs, virtual environments, and generated output are ignored by Git.
 
 ## Trade-offs and limits
 
-- PostgreSQL replaces a separate queue service, reducing operational scope while providing durable scheduling, locking, transactions, and constraints. The job-row lock prioritizes correctness over maximum per-job database parallelism.
-- The shared limiter is correct for one API process. Multiple replicas or concurrent jobs would need shared rate admission and fair scheduling.
-- Startup discovers one queued/running job and the watchdog reclaims expired work. This provides practical recovery, but it is not the bonus guarantee of full restart resumability or exactly-once HTTP delivery.
-- The HTTP dependency may execute an attempt more than once because there is no transaction spanning PostgreSQL and the simulator. Fencing makes accepted database completion effectively once per store.
+- PostgreSQL replaces a separate queue service, reducing operational scope while providing durable scheduling, distributed rate admission, locking, transactions, constraints, and recovery state. Global claims are briefly serialized to make fairness and the processing cap easy to defend at this scale.
+- Every participating process must share the same PostgreSQL database and configuration. Independent databases would have independent request budgets.
+- Startup scans all queued/running jobs, resumes eligible pending/retry work, leaves valid leases untouched, reclaims expired leases, and finalizes jobs stranded after their work became terminal. Startup is idempotent, and multiple processes can perform the same scans safely.
+- The HTTP dependency may execute an interrupted attempt more than once because there is no transaction spanning PostgreSQL and the simulator. Committed successful stores are never claimed again, and fencing makes accepted database completion effectively once per store.
 - Uploads are buffered with explicit byte and row limits, appropriate for the supplied 5,000-row file but not streaming-scale ingestion.
 - Immutable scoring history simplifies publication and auditability but grows with every rescore and has no retention workflow.
 - Attempt history and raw upstream payload archival are omitted; only attempt count, current scheduling/lease data, last error, and accepted typed metrics are stored.
 - At five requests per second, 5,000 first attempts require at least 16 minutes 40 seconds before latency and retries. The 220 ms safety interval raises the local scheduler floor to about 18 minutes 20 seconds.
 
-Detailed validation policies are in [CSV ingestion](csv-ingestion.md), [database schema](database-schema.md), and [enrichment engine](enrichment-engine.md). Final evidence is in [requirement verification](requirements-verification.md), the [Phase 9 verification report](phase-9-report.md), and the [Phase 10 submission report](phase-10-report.md).
+Detailed validation policies are in [CSV ingestion](csv-ingestion.md), [database schema](database-schema.md), and [enrichment engine](enrichment-engine.md). Final evidence is in [requirement verification](requirements-verification.md), the [bonus implementation report](bonus-implementation-report.md), the [Phase 9 verification report](phase-9-report.md), and the [Phase 10 submission report](phase-10-report.md).

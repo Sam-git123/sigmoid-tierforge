@@ -18,7 +18,7 @@ Jobs finish as `completed` when all stores succeeded, `completed_with_errors` wh
 
 ## Rate and transaction boundaries
 
-Every initial or retry request start passes through one process-wide limiter. Admission is serialized using a monotonic clock, with `MIN_DISPATCH_INTERVAL_MS=220`. No burst capacity accumulates. Five starts span 880 ms and the sixth cannot start until 1,100 ms after the first, satisfying the rolling one-second maximum of five for this process. Valid `Retry-After` values also defer shared admission.
+Every initial or retry request start passes through the PostgreSQL distributed limiter. A transaction locks the singleton rate row, uses database time, and reserves starts at `MIN_DISPATCH_INTERVAL_MS=220`; callers commit before sleeping and retrying. No burst capacity accumulates. Five starts span 880 ms and the sixth reservation is later than 1,000 ms after the first. Every job and API process using the database shares this budget, including persisted `Retry-After` cooldowns.
 
 Claims use a short transaction and consistent job-before-store lock order:
 
@@ -43,6 +43,6 @@ Normal completion is `completed` when every store succeeded, `completed_with_err
 
 ## Remaining operational limits
 
-The implementation does not preserve a separate per-attempt history table or coordinate rate limits across multiple API processes. A hard stop is recovered after process restart and lease expiry, but exactly-once upstream delivery and multi-process failover are not claimed.
+The implementation does not preserve a separate per-attempt history table. It coordinates rate limits and work ownership across multiple API processes through PostgreSQL. A hard stop is recovered after process restart and lease expiry. Exactly-once upstream HTTP delivery is impossible without provider idempotency, but committed successful work is never claimed again and stale responses cannot write.
 
-The limiter is process-wide. Running multiple API processes or other callers against the same simulator would require a shared cross-process limiter to preserve a truly global guarantee; multiple application processes are outside the core topology.
+The coordinator owns one bounded shared pool per process rather than one pool per job. Global claims select the least-recently-served eligible job and enforce the configured valid-lease cap across the database. Startup and periodic discovery scan all active jobs; valid leases owned by other processes are respected, while expired work is reclaimed.

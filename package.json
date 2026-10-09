@@ -19,6 +19,7 @@
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm -r test",
     "test:db": "pnpm --filter @tierforge/api test:db",
+    "test:bonus": "pnpm build \u0026\u0026 pnpm --filter @tierforge/api test:bonus",
     "db:up": "docker compose up -d --wait postgres",
     "db:down": "docker compose down",
     "db:migrate": "pnpm --filter @tierforge/api db:migrate"

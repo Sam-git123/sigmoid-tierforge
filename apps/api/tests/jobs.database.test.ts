@@ -108,6 +108,24 @@ describe.skipIf(!connectionString)('job API with PostgreSQL', () => {
       progressPercentage: 0,
     });
   });
+  it('lists recent jobs independently while several remain active', async () => {
+    const created = await Promise.all([
+      upload(header + '\nLIST-1,N,A,C,S,I'),
+      upload(header + '\nLIST-2,N,A,C,S,I'),
+      upload(header + '\nLIST-3,N,A,C,S,I'),
+    ]);
+    expect(created.every((response) => response.status === 202)).toBe(true);
+    const response = await request(app()).get('/api/jobs');
+    expect(response.status).toBe(200);
+    expect(response.body.totalRecords).toBe(3);
+    expect(response.body.records).toHaveLength(3);
+    expect(new Set(response.body.records.map((job: { jobId: string }) => job.jobId))).toEqual(
+      new Set(created.map((job) => job.body.jobId)),
+    );
+    expect(response.body.records.every((job: { status: string }) => job.status === 'queued')).toBe(
+      true,
+    );
+  });
   it('counts each persisted state separately, including processing/retry_wait/skipped', async () => {
     const rows = Array.from({ length: 6 }, (_, i) => `S${i},N,A,C,S,I`);
     const created = await upload(header + '\n' + rows.join('\n'));
@@ -275,21 +293,15 @@ describe.skipIf(!connectionString)('job API with PostgreSQL', () => {
       202,
     );
   });
-  it.each(['queued', 'running'])(
-    'rejects a new job while an existing job is %s',
-    async (status) => {
-      const first = await upload();
-      if (status === 'running')
-        await database.pool.query("UPDATE jobs SET status = 'running', started_at = now()");
-      const second = await upload();
-      expect(second.status).toBe(409);
-      expect(second.body.error).toMatchObject({
-        code: 'ACTIVE_JOB_EXISTS',
-        details: { activeJobId: first.body.jobId },
-      });
-      expect((await database.pool.query('SELECT count(*) FROM jobs')).rows[0].count).toBe('1');
-    },
-  );
+  it.each(['queued', 'running'])('allows a new job while an existing job is %s', async (status) => {
+    const first = await upload();
+    if (status === 'running')
+      await database.pool.query("UPDATE jobs SET status = 'running', started_at = now()");
+    const second = await upload();
+    expect(second.status).toBe(202);
+    expect(second.body.jobId).not.toBe(first.body.jobId);
+    expect((await database.pool.query('SELECT count(*) FROM jobs')).rows[0].count).toBe('2');
+  });
   it('allows historical completed jobs and repeated store IDs in a later job', async () => {
     const first = await upload();
     await database.pool.query("UPDATE job_stores SET status = 'succeeded'");
@@ -302,14 +314,15 @@ describe.skipIf(!connectionString)('job API with PostgreSQL', () => {
     expect(second.body.jobId).not.toBe(first.body.jobId);
     expect((await database.pool.query('SELECT count(*) FROM jobs')).rows[0].count).toBe('2');
   });
-  it('atomically admits only one of two concurrent HTTP submissions', async () => {
+  it('atomically admits both concurrent HTTP submissions as independent jobs', async () => {
     const responses = await Promise.all([upload(), upload()]);
-    expect(responses.map((response) => response.status).sort()).toEqual([202, 409]);
+    expect(responses.map((response) => response.status).sort()).toEqual([202, 202]);
+    expect(new Set(responses.map((response) => response.body.jobId)).size).toBe(2);
     expect(
       (await database.pool.query("SELECT count(*) FROM jobs WHERE status IN ('queued','running')"))
         .rows[0].count,
-    ).toBe('1');
-    expect((await database.pool.query('SELECT count(*) FROM job_stores')).rows[0].count).toBe('1');
+    ).toBe('2');
+    expect((await database.pool.query('SELECT count(*) FROM job_stores')).rows[0].count).toBe('2');
   });
   it('rolls back an earlier store batch and the job if a later batch fails', async () => {
     const repository = createJobRepository(database.pool);

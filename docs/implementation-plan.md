@@ -65,21 +65,21 @@ Sources: [complete original assignment](requirements/tierforge-requirements.md),
 - [x] **R30 — §7.2.1:** README setup/run instructions. Evidence: Phase 5 clean setup rehearsal.
 - [x] **R31 — §7.2.2:** README explains running provided simulator alongside app. Evidence: Phase 5 documented working directory, Python install/run commands, configurable base URL, and DB/app startup.
 - [x] **R32 — §7.2.3:** README briefly explains architecture choices. Evidence: Phase 5 summary linked to architecture documentation.
-- [x] **R33 — §7.2.4:** README states known limitations/shortcuts. Evidence: Phase 5 concrete single-process/restart/validation limits and observed results.
+- [x] **R33 — §7.2.4:** README states current limitations and shortcuts, including shared-database coordination, compatible configuration, at-least-once external delivery, and the omitted live 5,000-call run.
 - [ ] **R34 — §7.3:** Preserve/include provided sample files. Evidence: Phase 5 sample CSV and original attachment inventory, with missing generator explicitly disclosed.
 - [x] **R35 — §7.4:** If tests are included, one documented command runs them. Evidence: Phase 5 `pnpm test` from repo root with PostgreSQL test prerequisite documented. No test scripts exist in Phase 0.
 
 ### Bonus only — Section 6.2
 
-- [ ] **B01:** Multiple concurrent enrichment jobs sharing the global request budget. Deferred until core passes; revisit the single-active-job constraint and fairness. Multiple processes additionally require a shared limiter, not separate process-local buckets.
-- [ ] **B02:** Full process-restart resumability without losing in-flight work or redoing successes. Deferred; core terminates interrupted jobs honestly. Lease recovery inside a live process remains mandatory R27.
+- [x] **B01:** Multiple concurrent enrichment jobs share fair database-backed claims, a database-wide processing cap, and one database-coordinated request budget across independent processes. Evidence: migration 003, distributed limiter tests, multi-job repository tests, and the two-process live harness.
+- [x] **B02:** Full process-restart resumability preserves committed successes and durable retry schedules, then reclaims unfinished leases after restart. Evidence: startup/restart database tests and a forced process-kill live harness against the unchanged simulator. External delivery remains at least once for an interrupted in-flight request.
 
 ## User-directed constraints and non-functional requirements
 
 - [x] **U01:** React/TypeScript/Vite, Tailwind, TanStack Query, Node/TypeScript/Express, PostgreSQL/`pg`, Zod, Vitest/Supertest, pnpm workspaces, Docker Compose PostgreSQL. Phase 1 scaffold/build acceptance.
 - [x] **U02:** One store per persisted work unit; asynchronous enrichment; durable processing, retry, success, and failure states. Phases 2–4 state and persistence tests.
 - [x] **U03:** Phases 4–5 cover atomic claims, fencing, bounded jittered retries, timeout/network handling, and the general lease reaper.
-- [x] **U04:** One process-wide limiter used by the background worker module without extra queue infrastructure. Phase 4 proves initial and retry attempts share it, including provider cooldown.
+- [x] **U04:** One database-coordinated limiter used by every worker process without extra queue infrastructure. Initial attempts and retries share reservations and provider cooldown.
 - [x] **U05:** Separate raw enrichment from scores and enrichment module from scoring; Phase 6 uses set-based SQL and proves zero upstream calls.
 - [x] **U06:** Polling dashboard; no authentication or infrastructure expansion. Phase 5 behavior/scope review.
 - [x] **U07:** Phase 0 creates project guidance, architecture with three Mermaid diagrams, traceable plan, and explicit decisions/assumptions; no application implementation, package installation, or commits. Phase 0 document verification.
@@ -213,7 +213,7 @@ Acceptance:
 
 - Fresh documented install and migration command succeeds against a disposable DB; application boot requires valid configuration and DB connection.
 - Workspace lint/typecheck/build succeed; one root test command can run Vitest and Supertest suites with documented DB prerequisite.
-- Constraints reject duplicate store IDs per job, second active job, cross-job score links, invalid weights, and invalid lease/state combinations.
+- Constraints reject duplicate store IDs per job, cross-job score links, invalid weights, and invalid lease/state combinations. Migration 003 intentionally permits concurrent active jobs.
 - Modules import cleanly; server startup is separate from constructing the Express app for tests; simulator remains unchanged. Covers U01 and Q01 foundations.
 
 ### Phase 2 — CSV intake and durable job API (implemented)
@@ -224,12 +224,12 @@ Acceptance:
 
 - Supplied CSV parses to the expected 5,000 stores with all required fields. Valid upload returns promptly after commit without calling enrichment inside the request.
 - Missing/duplicate headers, empty data, malformed quotes, duplicate IDs, oversized files, and blank required fields produce useful errors and no partial accepted jobs. Quoted fields, BOM, reordered columns, and extra-column warning behave as documented.
-- Two simultaneous valid submissions yield one active job and one `409`; every accepted store has exactly one persisted pending row.
+- Two simultaneous valid submissions create two isolated active jobs; every accepted store has exactly one persisted pending row.
 - Progress obeys count invariants. DB errors roll back import. Covers R04–R07, R25, U02, Q05/Q06.
 
 ### Phase 3 — Basic enrichment engine (implemented)
 
-Implemented the documented simulator client, validated success payloads, one process-wide 220 ms paced limiter, six fixed worker loops, atomic pending claims, UUID leases, fenced metric persistence, queued-job notification, startup discovery, and terminal placeholder failure handling.
+Implemented the documented simulator client, validated success payloads, bounded worker loops, atomic claims, UUID leases, fenced metric persistence, job notification/discovery, and terminal failure handling. The bonus phase later replaced runtime process-local admission with database-coordinated admission and extended claims across jobs.
 
 Evidence:
 
@@ -297,9 +297,9 @@ Acceptance:
 - Responsive tables, labeled controls, focus states, and explicit loading/error/empty/unscored states support keyboard and smaller-screen use.
 - Focused frontend tests cover CSV messages, invalid weights, submitted payloads, progress/failure display, tier query behavior, and dashboard loading/empty states.
 
-### Optional phase — Bonuses (no reserved core budget)
+### Bonus phase — concurrent jobs and restart continuation (implemented)
 
-Only after a later explicit request and all core acceptance checks: add concurrent jobs with globally coordinated request admission, or full restart continuation. Each needs dedicated failure/concurrency tests and revised trade-offs. No bonus work is authorized now.
+Migration 003 removes the single-active-job constraint and adds scheduler and rate-admission state. Fair cross-job claims, database-wide concurrency, database-coordinated rate admission, startup discovery, persisted retry wakeups, and expired-lease recovery support multiple processes and process restart. The dedicated harness starts two backend OS processes against one database and later kills and restarts a backend during live simulator work.
 
 ## Testing strategy
 
@@ -311,6 +311,6 @@ Keep live-simulator smoke tests separate from deterministic suites because failu
 
 ## Scope boundary and completion reporting
 
-Mandatory assignment scope: CSV intake, asynchronous resilient enrichment, persisted results/work tracking, exact configurable score/tier reruns without enrichment, and dashboard for one active job. User constraints select the stack and queue/concurrency techniques. Extra validation, pagination, revision history, startup termination policy, and numeric precision are explicit implementation choices in service of core.
+Mandatory assignment scope remains CSV intake, asynchronous resilient enrichment, persisted results/work tracking, exact configurable score/tier reruns without enrichment, and the dashboard. Both optional Section 6.2 bonuses are also implemented. Extra validation, pagination, revision history, startup termination policy, and numeric precision are explicit implementation choices in service of core.
 
-Do not claim bonuses, a missing generator, untested runtime behavior, or proposed scripts are complete. Each future handoff lists requirement IDs satisfied, files changed, commands/results, limitations, and an optional commit-message suggestion. Do not create a commit unless the user later explicitly requests one.
+Do not claim a missing generator, untested runtime behavior, or proposed scripts are complete. Bonus claims must reference the dedicated multi-process and forced-restart evidence. Each handoff lists requirement IDs satisfied, files changed, commands/results, limitations, and an optional commit-message suggestion. Do not create a commit unless the user later explicitly requests one.

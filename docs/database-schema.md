@@ -1,6 +1,6 @@
 # Phase 1 database schema
 
-The Phase 1 user request supersedes the Phase 0 schema proposal. The source of executable schema truth is [001_foundation.sql](../apps/api/migrations/001_foundation.sql), followed by the Phase 5 failure-streak migration. Phase 2 uses `jobs` and `job_stores` for atomic queued job creation; Phases 3–5 use the lease, retry, error, enrichment, and failure-streak columns. Phase 6 uses the existing scoring tables without another migration.
+The Phase 1 user request supersedes the Phase 0 schema proposal. The source of executable schema truth is the ordered files under `apps/api/migrations/`. Migration 003 adds only bonus coordination state while preserving all domain rows: it removes the single-active-job index, adds fair-scheduling metadata to jobs, and adds one global rate-limit row.
 
 ## Tables and keys
 
@@ -10,12 +10,13 @@ The Phase 1 user request supersedes the Phase 0 schema proposal. The source of e
 - **scoring_configs:** primary key (job_id, revision), job FK, three NUMERIC(18,2) bars; three NUMERIC(5,2) weights; Large/Medium NUMERIC(5,2) thresholds; positive revision and updated_at. Weights are each 0–100 and sum exactly to 100; bars are nonnegative; 0 <= medium_threshold < large_threshold <= 100.
 - **store_scores:** primary key (job_id, store_id, config_revision), composite FK to that store's enrichment, composite FK to that job's config revision; NUMERIC(5,2) score bounded 0–100, Large/Medium/Small tier, computed_at. Multiple revisions may coexist without allowing cross-job references.
 - **schema_migrations:** infrastructure ledger with migration name primary key, SHA-256 checksum, and applied_at.
+- **enrichment_rate_limit:** infrastructure singleton containing the next request-start reservation and provider cooldown shared by every application process.
 
 Finite precision NUMERIC rejects infinities; explicit NaN exclusions on metric/bar columns and upper bounds on percentage fields reject PostgreSQL's special NaN value. Values with excess fractional precision are rounded by PostgreSQL's typmod: later API validation must reject excess precision before insertion, as planned. Database constraints are not a replacement for later input validation.
 
-## Work and active-job invariants
+## Work and multi-job invariants
 
-A unique partial index on the constant 1 where job status is queued or running supplies a single shared active slot. It is enforced even for simultaneous connections; checking for an active row before inserting is insufficient.
+Multiple queued/running jobs are allowed. `jobs.scheduler_last_claimed_at` records the last fair-scheduler service time. A short advisory-locked claim transaction selects the oldest eligible job, enforces the database-wide valid-lease cap, then locks one store row with `FOR UPDATE SKIP LOCKED`. Composite job/store keys continue to prevent cross-job ownership or result contamination.
 
 Attempt counts stay between zero and max_attempts; the maximum is positive. Processing requires a nonnull token/expiry and at least one claimed attempt. Other states require null lease fields. Retry wait requires a due timestamp and an attempt count between one and max_attempts minus one; other states have no retry timestamp.
 
@@ -23,13 +24,14 @@ Phase 2 creates queued jobs with pending stores, zero attempts, configured maxim
 
 ## Indexes
 
-- jobs_single_active_idx: uniqueness over both active job states.
 - jobs_created_at_idx: newest jobs.
+- jobs_active_scheduler_idx: fair ordering of queued/running jobs.
 - job_stores_pending_idx: (job_id, created_at, store_id), pending only.
 - job_stores_retry_eligible_idx: (job_id, next_attempt_at, store_id), retry_wait only.
 - job_stores_expired_lease_idx: (job_id, lease_expires_at, store_id), processing only.
 - job_stores_status_idx: (job_id, status, store_id).
 - store_scores_tier_idx: (job_id, config_revision, tier, store_id).
+- enrichment_rate_limit_pkey: singleton coordination row.
 
 Primary-key indexes cover referenced store/config identities. Foreign keys use restrictive defaults; no cascade deletion of domain data is introduced. Test-schema cleanup is isolated from application data.
 
@@ -37,7 +39,7 @@ Primary-key indexes cover referenced store/config identities. Foreign keys use r
 
 Use job_stores instead of store_work, and store_enrichments instead of enrichment_results. Composite store identity replaces internal work UUIDs. max_attempts belongs to job_stores. queued and skipped are included exactly as requested.
 
-No enrichment-attempt table, raw JSON payload, run-settings snapshot, or published-config pointer is present. Phase 5 added the failure-streak counter. Phase 6 uses the highest committed scoring revision as current, so an uncommitted or rolled-back revision is never exposed.
+No enrichment-attempt table, raw JSON payload, run-settings snapshot, or published-config pointer is present. Phase 5 added the failure-streak counter. Phase 6 uses the highest committed scoring revision as current, so an uncommitted or rolled-back revision is never exposed. Migration 003 is non-destructive: existing jobs, work state, enrichments, configurations, and scores remain unchanged.
 
 Configuration rows are keyed by revision rather than overwriting one config per job. Scores reference that exact same-job revision. Phase 6 locks the terminal job, allocates the next revision, inserts the configuration, and computes scores with one set-based statement in the same transaction. Historical revisions remain reproducible.
 

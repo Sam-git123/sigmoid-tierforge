@@ -9,6 +9,7 @@ export function createJobRoutes(service: JobService, maxBytes: number) {
   const router = Router();
   const controller = createJobController(service);
   router.post('/jobs', csvUpload(maxBytes), controller.create);
+  router.get('/jobs', controller.list);
   router.get(
     '/jobs/:jobId',
     validateRequest(

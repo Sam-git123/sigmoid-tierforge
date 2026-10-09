@@ -9,6 +9,9 @@ export async function createTestDatabase(connectionString: string) {
   let pool: pg.Pool | undefined;
   try {
     await admin.query(`CREATE SCHEMA "${schema}"`);
+    const scopedUrl = new URL(connectionString);
+    scopedUrl.searchParams.set('options', `-c search_path=${schema}`);
+    const databaseUrl = scopedUrl.toString();
     pool = new pg.Pool({
       connectionString,
       options: `-c search_path=${schema}`,
@@ -19,10 +22,16 @@ export async function createTestDatabase(connectionString: string) {
     const databasePool = pool;
     return {
       pool: databasePool,
+      databaseUrl,
+      schema,
       async reset() {
         // search_path is this generated schema; application/public tables are never cleared.
         await databasePool.query(
           'TRUNCATE jobs, job_stores, store_enrichments, scoring_configs, store_scores',
+        );
+        await databasePool.query(
+          `UPDATE enrichment_rate_limit SET next_start_at = '-infinity',
+             cooldown_until = '-infinity', updated_at = clock_timestamp()`,
         );
       },
       async close() {

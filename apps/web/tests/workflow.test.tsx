@@ -141,6 +141,32 @@ describe('Phase 8 workflow', () => {
 });
 
 describe('typed API integration', () => {
+  it('lists independently navigable jobs', async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          records: [
+            {
+              jobId: job.jobId,
+              status: 'running',
+              totalStores: 10,
+              createdAt: job.createdAt,
+              startedAt: job.startedAt,
+              finishedAt: null,
+              failureCode: null,
+              failureReason: null,
+            },
+          ],
+          totalRecords: 1,
+        }),
+        { headers: { 'Content-Type': 'application/json' } },
+      ),
+    );
+    const result = await createTierForgeApi(createApiClient('/api', fetcher)).getJobs();
+    expect(fetcher.mock.calls[0]?.[0]).toBe('/api/jobs');
+    expect(result).toMatchObject({ totalRecords: 1, records: [{ jobId: job.jobId }] });
+  });
+
   it('sends the exact scoring form payload as JSON', async () => {
     const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
       new Response(

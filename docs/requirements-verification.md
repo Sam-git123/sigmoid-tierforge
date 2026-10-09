@@ -15,7 +15,7 @@ This final checklist uses the requirement IDs established in `implementation-pla
 
 - **Status:** Implemented; verified by repository and requirement inspection.
 - **Source:** `AGENTS.md`, `docs/architecture.md`, and the complete application source.
-- **Tests:** The complete 208-test suite verifies the delivered core; scope itself is inspection evidence.
+- **Tests:** The complete 217-test suite plus the dedicated two-process restart harness verify the delivered core and bonuses; scope itself is inspection evidence.
 - **Limitation:** Historical development duration cannot be reconstructed from the repository.
 
 ### R03 — Integrate the provided simulator without replacing it
@@ -55,7 +55,7 @@ This final checklist uses the requirement IDs established in `implementation-pla
 - **Status:** Implemented and verified.
 - **Source:** `enrichment-client.ts`, `coordinator.ts`, `worker.ts`, and `enrichment-repository.ts`.
 - **Tests:** `enrichment-client.test.ts`, `worker.test.ts`, and `enrichment.database.test.ts`.
-- **Limitation:** Core operation is intentionally one active job and one API process.
+- **Limitation:** Every participating worker process must share the same PostgreSQL database and compatible concurrency/rate settings.
 
 ### R08 — Persist the three enrichment metrics
 
@@ -159,7 +159,7 @@ This final checklist uses the requirement IDs established in `implementation-pla
 - **Status:** Implemented and verified.
 - **Source:** `rate-limiter.ts`, `worker.ts`, `coordinator.ts`, and `enrichment-client.ts`.
 - **Tests:** `rate-limiter.test.ts`, `worker.test.ts`, and `enrichment-client.test.ts` cover 20 simultaneous callers, shared retry admission, and `Retry-After` cooldown changes while waiting.
-- **Limitation:** The limiter is process-wide; multiple API processes would require a distributed limiter.
+- **Limitation:** The distributed limiter coordinates application processes through one database; unrelated external clients are outside its quota boundary.
 
 ### R22 — Retry transient HTTP 500 failures with a bound
 
@@ -187,7 +187,7 @@ This final checklist uses the requirement IDs established in `implementation-pla
 ### R25 — Complete Steps 1–4 for one job at a time
 
 - **Status:** Implemented and live-verified.
-- **Source:** complete API and React workflow; active-job uniqueness in migration `001_foundation.sql`.
+- **Source:** complete job-scoped API and React workflow; migration `003_concurrent_jobs_and_global_rate_limit.sql` permits concurrent active jobs.
 - **Tests:** `jobs.database.test.ts`, `workflow.test.tsx`, and the Phase 9 live upload → enrich → score → dashboard → rescore smoke flow.
 - **Limitation:** The live smoke interacted through HTTP and verified the served frontend root; browser clicks were not repeated with automation.
 
@@ -240,7 +240,7 @@ This final checklist uses the requirement IDs established in `implementation-pla
 - **Status:** Implemented and inspected.
 - **Source:** `README.md`, `docs/architecture.md`, `docs/database-schema.md`, and `docs/enrichment-engine.md`.
 - **Tests:** Architecture invariants are exercised by the database, worker, scoring, and dashboard suites.
-- **Limitation:** Documentation describes a single-process deployment by design.
+- **Limitation:** Multi-process coordination depends on the shared PostgreSQL database.
 
 ### R33 — State limitations and shortcuts
 
@@ -265,5 +265,5 @@ This final checklist uses the requirement IDs established in `implementation-pla
 
 ## Bonus scope
 
-- **B01 — Multiple active jobs:** Not implemented. The mandatory one-active-job database constraint remains intentional.
-- **B02 — Full live process-restart demonstration:** Partially verified through persisted retry/lease/startup-recovery integration tests; Phase 9 did not kill and relaunch the complete live stack mid-job.
+- **B01 — Multiple active jobs:** Implemented and verified with fair cross-job claims, a database-wide processing cap, a PostgreSQL-coordinated global limiter, recent-job navigation, database integration tests, and two independent backend OS processes.
+- **B02 — Full live process-restart demonstration:** Implemented and verified with durable retry wakeups, startup discovery, lease recovery, committed-success fencing, database tests, and a forced backend kill/relaunch against the unchanged simulator. An interrupted uncommitted request may be repeated after lease expiry.
