@@ -27,6 +27,7 @@ describe('environment validation', () => {
     { ...valid, ENRICHMENT_MAX_RPS: '6' },
     { ...valid, LEASE_DURATION_MS: '12000' },
     { ...valid, RETRY_CAP_MS: '500' },
+    { ...valid, MAX_UPSTREAM_COOLDOWN_MS: '86400001' },
     { ...valid, MIN_DISPATCH_INTERVAL_MS: '100' },
     { ...valid, MIN_DISPATCH_INTERVAL_MS: '200' },
     { ...valid, CSV_MAX_BYTES: '0' },

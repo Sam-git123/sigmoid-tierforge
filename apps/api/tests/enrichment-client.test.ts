@@ -64,6 +64,24 @@ describe('enrichment client', () => {
     });
   });
 
+  it('caps excessive Retry-After values so a job cannot wait indefinitely', async () => {
+    const client = createEnrichmentClient({
+      baseUrl: 'http://127.0.0.1:8000',
+      timeoutMs: 1000,
+      maxRetryAfterMs: 120_000,
+      fetch: vi.fn().mockResolvedValue(
+        new Response('rate limited', {
+          status: 429,
+          headers: { 'Retry-After': '3000000' },
+        }),
+      ),
+    });
+    await expect(client.enrich(store)).rejects.toMatchObject({
+      code: 'RATE_LIMITED',
+      retryAfterMs: 120_000,
+    });
+  });
+
   it.each([
     [500, 'PROVIDER_ERROR', true],
     [503, 'PROVIDER_ERROR', true],

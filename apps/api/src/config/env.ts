@@ -33,6 +33,7 @@ const envSchema = z
     RETRY_BASE_MS: positiveInt(1000),
     RETRY_CAP_MS: positiveInt(30000),
     SYSTEMIC_FAILURE_STREAK: positiveInt(30),
+    MAX_UPSTREAM_COOLDOWN_MS: positiveInt(120000).pipe(z.number().max(86_400_000)),
   })
   .superRefine((env, context) => {
     if (env.LEASE_DURATION_MS < env.ENRICHMENT_TIMEOUT_MS + 5000) {

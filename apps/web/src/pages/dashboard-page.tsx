@@ -4,9 +4,11 @@ import { Link, useLocation, useParams } from 'react-router';
 import { queryKeys } from '../api/query-keys';
 import { tierForgeApi, type StoreTier } from '../api/tierforge';
 import { ErrorNotice, LoadingPanel, PageHeading } from '../components/app-shell';
-import { StatCard, StoreResultsTable, TierBreakdown } from '../components/dashboard';
+import { DashboardStats, StoreResultsTable, TierBreakdown } from '../components/dashboard';
+import { FailureTable } from '../components/failure-table';
 import { JobStatus } from '../components/job-progress';
 import { errorMessage } from '../utils/format';
+import { isTerminalStatus } from '../utils/job';
 
 export function DashboardPage() {
   const { jobId = '' } = useParams();
@@ -14,15 +16,31 @@ export function DashboardPage() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(50);
   const [tier, setTier] = useState<StoreTier>();
+  const [failurePage, setFailurePage] = useState(1);
   const dashboard = useQuery({
     queryKey: queryKeys.dashboard(jobId),
     queryFn: () => tierForgeApi.getDashboard(jobId),
     enabled: Boolean(jobId),
+    refetchInterval: (query) => {
+      const status = query.state.data?.job.status;
+      return status && !isTerminalStatus(status) ? 2_000 : false;
+    },
   });
+  const dashboardIsActive = Boolean(dashboard.data && !isTerminalStatus(dashboard.data.job.status));
   const stores = useQuery({
     queryKey: queryKeys.stores(jobId, page, pageSize, tier),
     queryFn: () => tierForgeApi.getStores(jobId, { page, pageSize, ...(tier ? { tier } : {}) }),
     enabled: Boolean(jobId),
+    refetchInterval: dashboardIsActive ? 2_000 : false,
+  });
+  const hasFailures = Boolean(
+    dashboard.data && dashboard.data.failedStores + dashboard.data.skippedStores > 0,
+  );
+  const failures = useQuery({
+    queryKey: queryKeys.failures(jobId, failurePage),
+    queryFn: () => tierForgeApi.getFailures(jobId, failurePage, 20),
+    enabled: Boolean(jobId) && hasFailures,
+    refetchInterval: dashboardIsActive ? 2_000 : false,
   });
   const recalculated = Boolean((location.state as { recalculated?: boolean } | null)?.recalculated);
 
@@ -72,39 +90,7 @@ export function DashboardPage() {
               <JobStatus status={dashboard.data.job.status} />
             </div>
           </div>
-          <section
-            className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4"
-            aria-label="Dashboard summary"
-          >
-            <StatCard
-              label="Total stores"
-              value={dashboard.data.job.totalStores}
-              helper="Stores in this upload"
-              tone="slate"
-            />
-            <StatCard
-              label="Enriched"
-              value={dashboard.data.successfullyEnrichedStores}
-              helper="Successful enrichment results"
-              tone="emerald"
-            />
-            <StatCard
-              label="Failed"
-              value={dashboard.data.failedStores}
-              helper={`${dashboard.data.skippedStores.toLocaleString()} additionally skipped`}
-              tone="rose"
-            />
-            <StatCard
-              label="Scored"
-              value={dashboard.data.scoredStores}
-              helper={
-                dashboard.data.currentScoringRevision
-                  ? `Revision ${dashboard.data.currentScoringRevision}`
-                  : 'No configuration yet'
-              }
-              tone="cyan"
-            />
-          </section>
+          <DashboardStats dashboard={dashboard.data} />
           <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
             <TierBreakdown {...dashboard.data.tierCounts} />
             <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
@@ -175,6 +161,24 @@ export function DashboardPage() {
               setPage(1);
             }}
           />
+          {hasFailures && (
+            <section aria-labelledby="dashboard-failure-heading">
+              <div className="mb-4">
+                <h2 id="dashboard-failure-heading" className="text-xl font-semibold text-slate-950">
+                  Failure details
+                </h2>
+                <p className="mt-1 text-sm text-slate-500">
+                  Failed and skipped stores retain their final persisted reasons.
+                </p>
+              </div>
+              <FailureTable
+                data={failures.data}
+                loading={failures.isPending}
+                error={failures.error ? errorMessage(failures.error) : undefined}
+                onPageChange={setFailurePage}
+              />
+            </section>
+          )}
         </div>
       ) : null}
     </>

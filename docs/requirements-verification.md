@@ -1,6 +1,6 @@
 # TierForge requirement verification
 
-This final checklist uses the requirement IDs established in `implementation-plan.md`. “Verified” means the behavior has automated evidence or direct inspection from the Phase 9 reliability audit and Phase 10 submission review. Command results and limitations are in `phase-9-report.md` and `phase-10-report.md`.
+This final checklist uses the requirement IDs established in `implementation-plan.md`. “Verified” means the behavior has automated evidence or direct inspection from the Phase 9 reliability audit, Phase 10 submission review, and final production-readiness audit. Current command results and limitations are in `final-requirement-audit.md`.
 
 ## Context, evaluation, and stack
 
@@ -15,7 +15,7 @@ This final checklist uses the requirement IDs established in `implementation-pla
 
 - **Status:** Implemented; verified by repository and requirement inspection.
 - **Source:** `AGENTS.md`, `docs/architecture.md`, and the complete application source.
-- **Tests:** The complete 204-test suite verifies the delivered core; scope itself is inspection evidence.
+- **Tests:** The complete 208-test suite verifies the delivered core; scope itself is inspection evidence.
 - **Limitation:** Historical development duration cannot be reconstructed from the repository.
 
 ### R03 — Integrate the provided simulator without replacing it
@@ -113,7 +113,7 @@ This final checklist uses the requirement IDs established in `implementation-pla
 ### R15 — Show enriched, failed, and pending counts with reasons
 
 - **Status:** Implemented and verified.
-- **Source:** `job-repository.ts`, `dashboard-repository.ts`, `job-progress.tsx`, and `failure-table.tsx`.
+- **Source:** `job-repository.ts`, `dashboard-repository.ts`, `dashboard-page.tsx`, `job-progress.tsx`, and `failure-table.tsx`.
 - **Tests:** `jobs.database.test.ts`, `dashboard.database.test.ts`, and `workflow.test.tsx`.
 - **Limitation:** The UI reports persisted counts and does not estimate completion time.
 
@@ -260,7 +260,7 @@ This final checklist uses the requirement IDs established in `implementation-pla
 
 - **Status:** Implemented and verified.
 - **Source:** root and workspace `package.json` scripts plus the database-test instructions in `README.md`.
-- **Tests:** `pnpm test` completed with 204 passing tests and no failures in Phase 9.
+- **Tests:** `pnpm test` completed with 208 passing tests, no failures, and no skips in the final audit.
 - **Limitation:** `TEST_DATABASE_URL` must point to a disposable PostgreSQL database or an account allowed to create isolated schemas.
 
 ## Bonus scope

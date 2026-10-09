@@ -20,7 +20,7 @@ The detailed item-by-item evidence remains in `requirements-verification.md`. Th
 - Replaced the proposal-era architecture document with the implemented five-table topology, database relationships, enrichment/recovery sequence, fencing rules, scoring sequence, error handling, and trade-offs.
 - Rewrote `README.md` as a clean-clone runbook with prerequisites, environment setup, Docker/existing-PostgreSQL paths, simulator setup, separate frontend/backend commands, usage, tests, security, architecture decisions, and limitations.
 - Added `interview-notes.md` with concise answers to all fourteen requested follow-up questions.
-- Removed the unused `MAX_UPSTREAM_COOLDOWN_MS` environment setting and corrected stale rate-limit documentation.
+- Removed stale rate-limit documentation, then wired `MAX_UPSTREAM_COOLDOWN_MS` into `Retry-After` parsing during the final audit so excessive upstream cooldowns remain bounded.
 - Updated contributor and implementation status to Phase 10 and corrected stale filenames/scope wording.
 - Audited production imports and declared packages; no unused dependency was identified.
 - Audited production code for console statements, debug endpoints, mock data, and embedded credentials; none were found.

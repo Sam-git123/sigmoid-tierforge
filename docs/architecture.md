@@ -185,7 +185,7 @@ stateDiagram-v2
 
 HTTP 429, HTTP 5xx, network failures, and logical timeouts are retryable. Non-429 4xx responses and invalid success payloads are permanent for the store; 401, 403, 404, and 405 also trigger immediate systemic termination because they indicate likely configuration or contract failure.
 
-Retry delay uses full jitter from zero through `min(RETRY_CAP_MS, RETRY_BASE_MS × 2^(attempt-1))`. A valid `Retry-After` is a lower bound. The selected database-time `next_attempt_at` is persisted, so retry waiting survives coordinator cycles and consumes no worker promise or connection.
+Retry delay uses full jitter from zero through `min(RETRY_CAP_MS, RETRY_BASE_MS × 2^(attempt-1))`. A valid `Retry-After` is a lower bound up to `MAX_UPSTREAM_COOLDOWN_MS`, preventing an untrusted header from leaving a job dormant indefinitely. The selected database-time `next_attempt_at` is persisted, so retry waiting survives coordinator cycles and consumes no worker promise or connection.
 
 Each request races the entire Fetch operation, including body parsing, against `ENRICHMENT_TIMEOUT_MS`. Abort is requested at timeout, but correctness does not assume the remote operation stops. The worker loop can continue while the abandoned promise remains observed to prevent unhandled rejection.
 

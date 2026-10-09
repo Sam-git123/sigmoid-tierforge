@@ -103,13 +103,13 @@ export async function runWorker(dependencies: WorkerDependencies): Promise<void>
     const claim = await repository.claimNextStore(jobId, leaseDurationMs);
     if (!claim) return;
     logger.debug({ workerId, ...correlation(claim) }, 'Store claimed');
+    await rateLimiter.waitForSlot();
+    if (!(await repository.isClaimCurrent(claim))) {
+      logger.warn({ workerId, ...correlation(claim) }, 'Expired or revoked claim not dispatched');
+      continue;
+    }
     let metrics: EnrichmentMetrics;
     try {
-      await rateLimiter.waitForSlot();
-      if (!(await repository.isClaimCurrent(claim))) {
-        logger.warn({ workerId, ...correlation(claim) }, 'Expired or revoked claim not dispatched');
-        continue;
-      }
       logger.info({ workerId, ...correlation(claim) }, 'Enrichment attempt started');
       metrics = await client.enrich(claim);
     } catch (cause) {

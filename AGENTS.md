@@ -10,7 +10,7 @@ The requirements were copied unchanged from `enrichment_simulator/docs/requireme
 
 ## Phase and scope
 
-Implement **only the phase explicitly requested by the user**. The current authorized phase is **Phase 10: final submission preparation**. Align the README and architecture documents with the implemented system, remove verified dead or generated material, audit environment safety, add interview notes, and execute the final verification. Do not add unrelated product features, deployment infrastructure, or bonus scope.
+Implement **only the work explicitly requested by the user**. The current authorized work is the **final requirement audit and production-readiness review**. Trace every mandatory assignment requirement to implementation and executed evidence, fix confirmed high-impact defects with focused changes, create `docs/final-requirement-audit.md`, and execute the final verification. Do not add unrelated product features, deployment infrastructure, or bonus scope.
 Prioritize one active enrichment job and the complete core workflow. Multiple concurrent jobs and full restart resumability are assignment bonuses. Do not add authentication, microservices, Redis, BullMQ, Kafka, Kubernetes, or distributed rate limiting to core scope.
 Never automatically stage, commit, push, or publish changes. A suggested commit message is informational only.
 

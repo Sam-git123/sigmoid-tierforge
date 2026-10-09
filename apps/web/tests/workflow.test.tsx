@@ -2,7 +2,8 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 import { createApiClient } from '../src/api/client';
 import { createTierForgeApi, type JobProgress } from '../src/api/tierforge';
-import { StoreResultsTable } from '../src/components/dashboard';
+import { DashboardStats, StoreResultsTable } from '../src/components/dashboard';
+import { FailureTable } from '../src/components/failure-table';
 import { JobProgressPanel } from '../src/components/job-progress';
 import { ScoringForm } from '../src/components/scoring-form';
 import { validateCsvHeaderText } from '../src/utils/csv';
@@ -88,6 +89,54 @@ describe('Phase 8 workflow', () => {
         />,
       ),
     ).toContain('No stores are currently scored as Large.');
+  });
+
+  it('renders dashboard pending counts and persisted failure reasons', () => {
+    const summary = renderToStaticMarkup(
+      <DashboardStats
+        dashboard={{
+          job: {
+            ...job,
+            counts: job.counts,
+          },
+          successfullyEnrichedStores: 4,
+          failedStores: 1,
+          skippedStores: 0,
+          scoredStores: 4,
+          tierCounts: { large: 1, medium: 2, small: 1 },
+          currentScoringRevision: 1,
+          currentScoringConfiguration: null,
+        }}
+      />,
+    );
+    expect(summary).toContain('Pending');
+    expect(summary).toContain('Pending, processing, or retrying');
+    expect(summary).toContain('>5<');
+
+    const failures = renderToStaticMarkup(
+      <FailureTable
+        loading={false}
+        data={{
+          records: [
+            {
+              storeId: 'FAILED-1',
+              storeName: 'Failed store',
+              attemptCount: 5,
+              lastErrorCode: 'RETRY_EXHAUSTED',
+              lastErrorMessage: 'Provider failed after five attempts.',
+              finalStatus: 'failed',
+            },
+          ],
+          page: 1,
+          pageSize: 20,
+          totalRecords: 1,
+          totalPages: 1,
+        }}
+        onPageChange={vi.fn()}
+      />,
+    );
+    expect(failures).toContain('RETRY_EXHAUSTED');
+    expect(failures).toContain('Provider failed after five attempts.');
   });
 });
 

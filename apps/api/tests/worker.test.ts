@@ -102,6 +102,19 @@ describe('enrichment worker', () => {
     expect(repository.recordAttemptFailure).not.toHaveBeenCalled();
   });
 
+  it('does not misclassify an ownership-check database error as a provider failure', async () => {
+    const repository = repositoryWithClaims([claim('S1')]);
+    vi.mocked(repository.isClaimCurrent).mockRejectedValue(new Error('database unavailable'));
+    const client: EnrichmentClient = {
+      enrich: vi.fn(),
+    };
+    await expect(runWorker(workerOptions(repository, client, limiter()))).rejects.toThrow(
+      'database unavailable',
+    );
+    expect(client.enrich).not.toHaveBeenCalled();
+    expect(repository.recordAttemptFailure).not.toHaveBeenCalled();
+  });
+
   it.each([
     [
       '500',

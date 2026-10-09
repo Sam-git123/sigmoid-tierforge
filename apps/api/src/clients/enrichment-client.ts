@@ -16,17 +16,24 @@ export interface EnrichmentClient {
 interface ClientOptions {
   baseUrl: string;
   timeoutMs: number;
+  maxRetryAfterMs?: number;
   fetch?: typeof fetch;
   now?: () => number;
 }
 
-function parseRetryAfter(value: string | null, now: () => number): number | undefined {
+function parseRetryAfter(
+  value: string | null,
+  now: () => number,
+  maxRetryAfterMs: number,
+): number | undefined {
   if (value === null) return undefined;
   const seconds = Number(value);
-  if (Number.isFinite(seconds) && seconds >= 0) return Math.ceil(seconds * 1000);
+  if (Number.isFinite(seconds) && seconds >= 0) {
+    return Math.min(maxRetryAfterMs, Math.ceil(seconds * 1000));
+  }
   const timestamp = Date.parse(value);
   if (Number.isNaN(timestamp)) return undefined;
-  return Math.max(0, timestamp - now());
+  return Math.min(maxRetryAfterMs, Math.max(0, timestamp - now()));
 }
 
 async function readSuccessfulResponse(
@@ -64,6 +71,7 @@ async function executeRequest(
   store: EnrichmentStore,
   signal: AbortSignal,
   now: () => number,
+  maxRetryAfterMs: number,
 ): Promise<EnrichmentMetrics> {
   let response: Response;
   try {
@@ -88,7 +96,7 @@ async function executeRequest(
   }
 
   if (response.status === 429) {
-    const retryAfterMs = parseRetryAfter(response.headers.get('retry-after'), now);
+    const retryAfterMs = parseRetryAfter(response.headers.get('retry-after'), now, maxRetryAfterMs);
     throw new EnrichmentAttemptError({
       code: 'RATE_LIMITED',
       message: 'Enrichment API rate limit exceeded.',
@@ -98,7 +106,7 @@ async function executeRequest(
     });
   }
   if (response.status >= 500) {
-    const retryAfterMs = parseRetryAfter(response.headers.get('retry-after'), now);
+    const retryAfterMs = parseRetryAfter(response.headers.get('retry-after'), now, maxRetryAfterMs);
     throw new EnrichmentAttemptError({
       code: 'PROVIDER_ERROR',
       message: `Enrichment API returned HTTP ${response.status}.`,
@@ -123,11 +131,19 @@ export function createEnrichmentClient(options: ClientOptions): EnrichmentClient
   const baseUrl = options.baseUrl.endsWith('/') ? options.baseUrl : `${options.baseUrl}/`;
   const endpoint = new URL('enrich', baseUrl);
   const now = options.now ?? Date.now;
+  const maxRetryAfterMs = options.maxRetryAfterMs ?? 120_000;
 
   return {
     async enrich(store) {
       const controller = new AbortController();
-      const request = executeRequest(fetcher, endpoint, store, controller.signal, now);
+      const request = executeRequest(
+        fetcher,
+        endpoint,
+        store,
+        controller.signal,
+        now,
+        maxRetryAfterMs,
+      );
       // The transport may ignore abort and settle after the logical timeout. Keep a
       // rejection observer attached even after Promise.race has returned.
       void request.catch(() => undefined);

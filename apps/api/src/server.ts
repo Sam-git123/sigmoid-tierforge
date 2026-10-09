@@ -36,6 +36,7 @@ async function start(): Promise<void> {
     client: createEnrichmentClient({
       baseUrl: env.ENRICHMENT_API_BASE_URL,
       timeoutMs: env.ENRICHMENT_TIMEOUT_MS,
+      maxRetryAfterMs: env.MAX_UPSTREAM_COOLDOWN_MS,
     }),
     rateLimiter: createRateLimiter({ minimumIntervalMs: env.MIN_DISPATCH_INTERVAL_MS }),
     logger,
