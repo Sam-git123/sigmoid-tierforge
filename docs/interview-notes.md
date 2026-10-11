@@ -2,11 +2,11 @@
 
 ## Q1: Why PostgreSQL-backed jobs instead of Redis or BullMQ?
 
-The assignment already needs SQL persistence, and its core permits one active job. Keeping workflow state in `job_stores` gives the implementation durable retries, row locks, transactions, constraints, and result data in one system. Redis or BullMQ would add another runtime and a consistency boundary without solving a requirement that PostgreSQL cannot handle at this scale. For higher throughput or multiple independent services, a dedicated queue could become worthwhile.
+The assignment already needs SQL persistence. Keeping workflow state in `job_stores` gives TierForge durable retries, row locks, transactions, constraints, results, fair multi-job claims, and cross-process coordination in one system. Redis or BullMQ would add another runtime and a consistency boundary without solving a requirement PostgreSQL cannot handle at this scale.
 
 ## Q2: Why is concurrency different from request rate?
 
-Concurrency is the number of operations that may be in flight; rate is the number that may start during a time window. TierForge uses six worker loops so other stores can progress while requests wait, but all loops and retries share one limiter that spaces starts by 220 ms. Increasing concurrency therefore does not allow the core process to exceed five request starts per rolling second.
+Concurrency is the number of operations that may be in flight; rate is the number that may start during a time window. Each process runs a bounded worker pool, while a PostgreSQL reservation row coordinates every process and spaces starts by 220 ms. Increasing concurrency or adding a process therefore does not allow participating workers to exceed five request starts per rolling second.
 
 ## Q3: How does `FOR UPDATE SKIP LOCKED` work?
 
@@ -14,7 +14,7 @@ Inside a short claim transaction, a worker selects one eligible `job_stores` row
 
 ## Q4: What happens when a worker crashes or becomes silent?
 
-A claimed row has a database-time lease expiry. The independent watchdog scans processing rows whose leases expired, locks one, revokes its token, and either schedules a retry or records final exhaustion. On process startup the coordinator discovers the single active job, and the watchdog eventually reclaims abandoned processing rows.
+A claimed row has a database-time lease expiry. The watchdog scans processing rows whose leases expired, revokes their token, and either schedules a retry or records final exhaustion. On process startup the coordinator discovers all active jobs, restores persisted retry wakeups, and eventually reclaims abandoned processing rows. Committed successes stay succeeded and are never claimed again.
 
 ## Q5: How are late responses handled safely?
 
@@ -42,11 +42,11 @@ Enrichment is slow and unreliable; scoring is deterministic over stored metrics.
 
 ## Q11: How would this architecture support multiple concurrent jobs?
 
-That bonus is not implemented. It would require removing or changing the active-job partial unique index, scheduling fairly across job IDs, and replacing the process-local limiter with one shared across all workers and API replicas. Job-scoped keys and repository methods already isolate data, but rate admission and coordinator ownership would need an explicit distributed design.
+The bonus is implemented with fair cross-job claims ordered by a persisted scheduler timestamp, a database-wide processing cap, and a database-coordinated request limiter. The frontend can create and revisit multiple jobs. Job-scoped keys keep enrichment, scoring, failures, and dashboard reads isolated.
 
 ## Q12: How would you add full process-restart resumability?
 
-The current database already persists pending work, retry times, attempts, and leases, and startup discovers the active job. To meet the full bonus guarantee, I would add durable attempt history and dispatch metadata, make coordinator leadership explicit, test kill/restart at every transition, and define how shutdown and abandoned network calls affect leases. External delivery would still be at least once unless the provider supported idempotency keys.
+The bonus is implemented. Pending work, retry times, attempts, leases, and accepted successes are durable. Startup discovers all active jobs, and expired leases recover work abandoned by a killed process. The live harness kills and relaunches the backend during simulator traffic, verifies committed successes are unchanged and not called again, and confirms the interrupted store is retried. External delivery remains at least once for an uncommitted in-flight request.
 
 ## Q13: What would you change for one million stores?
 
@@ -54,4 +54,4 @@ I would stream CSV validation into a staging table, use PostgreSQL `COPY`, valid
 
 ## Q14: What shortcuts were chosen for the 2–3 day time box?
 
-The core uses one API process, one active job, a process-local limiter, bounded in-memory CSV parsing, polling instead of push updates, and PostgreSQL instead of a separate queue. It stores only current attempt state and accepted metrics, retains scoring revisions without cleanup, and omits authentication, deployment infrastructure, raw payload archives, and attempt history. These choices preserve the assignment’s concurrency and failure guarantees while keeping the system small enough to explain and run locally.
+The implementation uses PostgreSQL instead of a separate queue, bounded in-memory CSV parsing, polling instead of push updates, and a small shared worker pool. It stores current attempt state and accepted metrics but not raw payload archives or attempt history; scoring revisions have no cleanup policy. Database coordination assumes every worker uses the same database and compatible worker/rate configuration.

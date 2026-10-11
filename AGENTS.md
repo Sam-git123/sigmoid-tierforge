@@ -10,8 +10,7 @@ The requirements were copied unchanged from `enrichment_simulator/docs/requireme
 
 ## Phase and scope
 
-Implement **only the work explicitly requested by the user**. The current authorized work is the **final requirement audit and production-readiness review**. Trace every mandatory assignment requirement to implementation and executed evidence, fix confirmed high-impact defects with focused changes, create `docs/final-requirement-audit.md`, and execute the final verification. Do not add unrelated product features, deployment infrastructure, or bonus scope.
-Prioritize one active enrichment job and the complete core workflow. Multiple concurrent jobs and full restart resumability are assignment bonuses. Do not add authentication, microservices, Redis, BullMQ, Kafka, Kubernetes, or distributed rate limiting to core scope.
+Implement **only the work explicitly requested by the user**. The current authorized work includes both Section 6.2 bonuses: multiple concurrent enrichment jobs under one global request budget and full restart resumability. Preserve the completed core workflow and do not add unrelated product features, deployment infrastructure, authentication, microservices, Redis, BullMQ, Kafka, or Kubernetes.
 Never automatically stage, commit, push, or publish changes. A suggested commit message is informational only.
 
 ## Technology and conventions
@@ -29,10 +28,10 @@ The frontend uses polling and shared API contracts, never database access. Keep 
 ## Architecture and concurrency invariants
 
 Use a PostgreSQL-backed queue with atomic `SELECT ... FOR UPDATE SKIP LOCKED` claims in short transactions. Never hold a database transaction during HTTP calls, backoff sleeps, or rate-limit waits.
-Run one API/worker process with one process-wide limiter: **all enrichment attempts, including retries, share at most five dispatches per second**. Do not enable clustering or multiple worker replicas under this design.
+All API/worker processes connected to the same database share a database-coordinated limiter: **all enrichment attempts, including retries, share at most five dispatches per rolling second**. The coordinator uses one bounded pool per process, while database claims enforce the configured global processing cap.
 Fence every attempt-dependent write with the current lease token, processing state, unexpired lease, and active job. Validate the fence and persist raw results/work completion atomically; stale callbacks must not change metrics, scores, or counters.
 Use a consistent job-before-work-row lock order. Reclaim expired leases independently of the original worker promise. Bound attempts, HTTP duration, retry backoff, and systemic failure handling; terminal jobs must have no nonterminal work.
-Use database uniqueness to enforce one active job and one work row per store per job. Persist retry timing and failure reasons. Derive progress from persisted rows rather than callback counts.
+Allow multiple active jobs while preserving one work row per store per job. Claim work fairly across active jobs, persist retry timing and failure reasons, and derive progress from persisted rows rather than callback counts.
 Use exactly the assignment's sum of weights for metrics meeting their bars (`>=`), then inclusive Large/Medium boundaries. No normalization. Recalculation uses persisted successful enrichment only and makes zero upstream calls.
 Publish each scoring revision atomically with its scores; serialize it with successful-result persistence so the dashboard cannot mix revisions.
 
@@ -52,7 +51,7 @@ Read `docs/csv-ingestion.md` before changing uploads. CSV headers are case-sensi
 
 ## Phase 3–5 enrichment policy
 
-Read `docs/enrichment-engine.md` and the unchanged simulator README before changing enrichment. Send exactly the documented five request fields; retain CSV `country` locally. One six-loop in-process pool shares one monotonic 220 ms paced limiter. Claims lock the job before a pending or due retry row and commit before limiter/network waits. Every attempt-changing write requires a running job, processing state, matching token, and unexpired lease. Retry 429, 5xx, network, and timeout failures up to five total attempts with persisted full-jitter timing; invalid responses and other permanent errors fail immediately. A coordinator timer wakes at the database-derived next due time. The Phase 5 watchdog reclaims expired leases using the same lock order. Thirty consecutive accepted provider-related failures stop the job; accepted success resets the persisted streak. Systemic termination skips unfinished rows, preserves prior successes, and fences late responses.
+Read `docs/enrichment-engine.md` and the unchanged simulator README before changing enrichment. Send exactly the documented five request fields; retain CSV `country` locally. Each process runs one bounded pool, and every process/job shares database rate admission and the database-wide processing cap. Fair claims lock a selected job before a pending or due retry row and commit before limiter/network waits. Every attempt-changing write requires a running job, processing state, matching token, and unexpired lease. Retry 429, 5xx, network, and timeout failures up to five total attempts with persisted full-jitter timing; invalid responses and other permanent errors fail immediately. A coordinator timer wakes at the database-derived next due time. The watchdog reclaims expired leases using the same lock order. Thirty consecutive accepted provider-related failures stop only that job; accepted success resets its persisted streak. Systemic termination skips that job's unfinished rows, preserves prior successes, and fences late responses.
 
 ## Phase 6 scoring policy
 
@@ -70,6 +69,6 @@ The browser workflow uses URL-scoped job IDs and TanStack Query for all server s
 
 Trace every mandatory item in the original brief to source and evidence in `docs/requirements-verification.md`. Prefer deterministic unit tests for clocks, jitter, backoff, timeouts, and rate admission; use real PostgreSQL for ownership, fencing, rollback, constraints, scoring publication, and concurrency. A live smoke flow must use the unchanged supplied simulator, while the 5,000-row verification may use deterministic persisted fixtures if the exact limitation is reported. Keep `pnpm test` as the single documented suite and require an isolated disposable PostgreSQL target through `TEST_DATABASE_URL`.
 
-## Phase 10 submission policy
+## Bonus implementation policy
 
-Submission documentation must describe the implemented five-table schema and single-process topology, not proposal-era attempt tables or bonus behavior. Keep the supplied simulator and sample files unchanged. State exactly which checks ran, retain explicit limits for one active job and process-local rate admission, and do not present practical lease recovery as the bonus guarantee of full restart resumability.
+Submission documentation must describe the implemented five domain tables plus the rate-admission infrastructure table. Keep the supplied simulator and sample files unchanged. State exactly which checks ran and distinguish database-committed success preservation from external exactly-once delivery: an unfinished request may be repeated after lease expiry because PostgreSQL and the simulator do not share a transaction.

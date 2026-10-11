@@ -14,5 +14,8 @@ export function createJobController(service: JobService) {
       throw new ApiError(422, 'VALIDATION_ERROR', 'Job ID must be a UUID.');
     res.json(await service.getJob(jobId));
   };
-  return { create, get };
+  const list: RequestHandler = async (_req, res) => {
+    res.json(await service.listJobs());
+  };
+  return { create, get, list };
 }

@@ -27,8 +27,10 @@ function claim(storeId: string, attemptCount = 1, maxAttempts = 5): ClaimedStore
 function repositoryWithClaims(claims: ClaimedStore[]): EnrichmentRepository {
   return {
     findActiveJobId: vi.fn(),
+    findActiveJobIds: vi.fn(),
     startJob: vi.fn(),
     claimNextStore: vi.fn().mockImplementation(async () => claims.shift() ?? null),
+    claimNextStoreAcrossJobs: vi.fn(),
     isClaimCurrent: vi.fn().mockResolvedValue(true),
     completeStore: vi.fn().mockResolvedValue(true),
     recordAttemptFailure: vi.fn().mockResolvedValue({
@@ -37,6 +39,7 @@ function repositoryWithClaims(claims: ClaimedStore[]): EnrichmentRepository {
     }),
     reclaimExpiredLease: vi.fn(),
     getNextRetryWakeup: vi.fn(),
+    getNextRetryWakeupAcrossJobs: vi.fn(),
     finishJobIfDone: vi.fn(),
   };
 }

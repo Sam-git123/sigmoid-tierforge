@@ -33,8 +33,13 @@ export type LeaseRecoveryResult =
 
 export interface EnrichmentRepository {
   findActiveJobId(): Promise<string | null>;
+  findActiveJobIds(): Promise<string[]>;
   startJob(jobId: string): Promise<boolean>;
   claimNextStore(jobId: string, leaseDurationMs: number): Promise<ClaimedStore | null>;
+  claimNextStoreAcrossJobs(
+    leaseDurationMs: number,
+    maxProcessing: number,
+  ): Promise<ClaimedStore | null>;
   isClaimCurrent(claim: ClaimedStore): Promise<boolean>;
   completeStore(claim: ClaimedStore, metrics: EnrichmentMetrics): Promise<boolean>;
   recordAttemptFailure(
@@ -49,6 +54,7 @@ export interface EnrichmentRepository {
     systemicFailureStreak: number,
   ): Promise<LeaseRecoveryResult | null>;
   getNextRetryWakeup(jobId: string): Promise<RetryWakeup | null>;
+  getNextRetryWakeupAcrossJobs(): Promise<RetryWakeup | null>;
   finishJobIfDone(jobId: string): Promise<JobProcessingSummary | null>;
 }
 
@@ -154,6 +160,14 @@ export function createEnrichmentRepository(pool: Pool): EnrichmentRepository {
       return result.rows[0]?.jobId ?? null;
     },
 
+    async findActiveJobIds() {
+      const result = await pool.query<{ jobId: string }>(
+        `SELECT id AS "jobId" FROM jobs
+         WHERE status IN ('queued', 'running') ORDER BY created_at, id`,
+      );
+      return result.rows.map((row) => row.jobId);
+    },
+
     async startJob(jobId) {
       return withTransaction(pool, async (client) => {
         const locked = await lockJob(client, jobId);
@@ -196,6 +210,73 @@ export function createEnrichmentRepository(pool: Pool): EnrichmentRepository {
              max_attempts AS "maxAttempts", lease_token AS "leaseToken",
              lease_expires_at AS "leaseExpiresAt"`,
           [jobId, storeId, leaseDurationMs],
+        );
+        return claimed.rows[0] ?? null;
+      });
+    },
+
+    async claimNextStoreAcrossJobs(leaseDurationMs, maxProcessing) {
+      return withTransaction(pool, async (client) => {
+        // Serialize only the short global scheduling decision. This makes the
+        // configured concurrency a database-wide limit across API processes.
+        await client.query("SELECT pg_advisory_xact_lock(hashtext('tierforge:global-claim'))");
+        const processing = await client.query<{ count: number }>(
+          `SELECT count(*)::integer AS count FROM job_stores
+           WHERE status = 'processing' AND lease_expires_at > clock_timestamp()`,
+        );
+        if ((processing.rows[0]?.count ?? 0) >= maxProcessing) return null;
+
+        const selectedJob = await client.query<{ jobId: string; status: string }>(
+          `SELECT j.id AS "jobId", j.status
+           FROM jobs j
+           WHERE j.status IN ('queued', 'running')
+             AND EXISTS (
+               SELECT 1 FROM job_stores s
+               WHERE s.job_id = j.id AND s.attempt_count < s.max_attempts
+                 AND (s.status = 'pending'
+                   OR (s.status = 'retry_wait' AND s.next_attempt_at <= clock_timestamp()))
+             )
+           ORDER BY j.scheduler_last_claimed_at NULLS FIRST, j.created_at, j.id
+           FOR UPDATE OF j SKIP LOCKED
+           LIMIT 1`,
+        );
+        const job = selectedJob.rows[0];
+        if (!job) return null;
+        if (job.status === 'queued') {
+          await client.query(
+            `UPDATE jobs SET status = 'running', started_at = clock_timestamp()
+             WHERE id = $1 AND status = 'queued'`,
+            [job.jobId],
+          );
+        }
+        const selectedStore = await client.query<{ storeId: string }>(
+          `SELECT store_id AS "storeId" FROM job_stores
+           WHERE job_id = $1 AND attempt_count < max_attempts
+             AND (status = 'pending'
+               OR (status = 'retry_wait' AND next_attempt_at <= clock_timestamp()))
+           ORDER BY COALESCE(next_attempt_at, created_at), store_id
+           FOR UPDATE SKIP LOCKED LIMIT 1`,
+          [job.jobId],
+        );
+        const storeId = selectedStore.rows[0]?.storeId;
+        if (!storeId) return null;
+        const claimed = await client.query<ClaimedStore>(
+          `UPDATE job_stores SET
+             status = 'processing', attempt_count = attempt_count + 1,
+             lease_token = gen_random_uuid(),
+             lease_expires_at = clock_timestamp() + ($3 * interval '1 millisecond'),
+             next_attempt_at = NULL, last_error_code = NULL, last_error_message = NULL,
+             updated_at = clock_timestamp()
+           WHERE job_id = $1 AND store_id = $2
+           RETURNING job_id AS "jobId", store_id AS "storeId", store_name AS "storeName",
+             address, city, state, country, attempt_count AS "attemptCount",
+             max_attempts AS "maxAttempts", lease_token AS "leaseToken",
+             lease_expires_at AS "leaseExpiresAt"`,
+          [job.jobId, storeId, leaseDurationMs],
+        );
+        await client.query(
+          `UPDATE jobs SET scheduler_last_claimed_at = clock_timestamp() WHERE id = $1`,
+          [job.jobId],
         );
         return claimed.rows[0] ?? null;
       });
@@ -387,6 +468,19 @@ export function createEnrichmentRepository(pool: Pool): EnrichmentRepository {
              ::double precision AS "delayMs"
          FROM job_stores WHERE job_id = $1 AND status = 'retry_wait'`,
         [jobId],
+      );
+      const row = result.rows[0];
+      if (!row?.nextRetryAt || row.delayMs === null) return null;
+      return { nextRetryAt: row.nextRetryAt, delayMs: row.delayMs };
+    },
+
+    async getNextRetryWakeupAcrossJobs() {
+      const result = await pool.query<{ nextRetryAt: Date | null; delayMs: number | null }>(
+        `SELECT min(s.next_attempt_at) AS "nextRetryAt",
+           greatest(0, extract(epoch FROM (min(s.next_attempt_at) - clock_timestamp())) * 1000)
+             ::double precision AS "delayMs"
+         FROM job_stores s JOIN jobs j ON j.id = s.job_id
+         WHERE j.status = 'running' AND s.status = 'retry_wait'`,
       );
       const row = result.rows[0];
       if (!row?.nextRetryAt || row.delayMs === null) return null;

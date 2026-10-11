@@ -13,7 +13,7 @@ import { createJobService } from './services/job-service.js';
 import { createScoringService } from './services/scoring.service.js';
 import { createDashboardService } from './services/dashboard-service.js';
 import { createCoordinator } from './workers/coordinator.js';
-import { createRateLimiter } from './workers/rate-limiter.js';
+import { createDistributedRateLimiter } from './workers/distributed-rate-limiter.js';
 
 async function start(): Promise<void> {
   loadEnvironmentFile();
@@ -38,7 +38,10 @@ async function start(): Promise<void> {
       timeoutMs: env.ENRICHMENT_TIMEOUT_MS,
       maxRetryAfterMs: env.MAX_UPSTREAM_COOLDOWN_MS,
     }),
-    rateLimiter: createRateLimiter({ minimumIntervalMs: env.MIN_DISPATCH_INTERVAL_MS }),
+    rateLimiter: createDistributedRateLimiter({
+      pool,
+      minimumIntervalMs: env.MIN_DISPATCH_INTERVAL_MS,
+    }),
     logger,
     concurrency: env.WORKER_CONCURRENCY,
     leaseDurationMs: env.LEASE_DURATION_MS,

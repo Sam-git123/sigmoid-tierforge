@@ -115,6 +115,7 @@ const dashboardSchema = z.object({
 });
 
 export type JobProgress = z.infer<typeof jobProgressSchema>;
+export type JobSummary = z.infer<typeof jobBaseSchema>;
 export type UploadResponse = z.infer<typeof uploadResponseSchema>;
 export type FailureRecord = z.infer<typeof failureSchema>;
 export type StoreRecord = z.infer<typeof storeSchema>;
@@ -149,6 +150,11 @@ export function createTierForgeApi(client: ApiClient) {
     },
     async getJob(jobId: string): Promise<JobProgress> {
       return jobProgressSchema.parse(await client.request(`/jobs/${jobId}`));
+    },
+    async getJobs(): Promise<{ records: JobSummary[]; totalRecords: number }> {
+      return z
+        .object({ records: z.array(jobBaseSchema), totalRecords: z.number() })
+        .parse(await client.request('/jobs'));
     },
     async getFailures(jobId: string, page = 1, pageSize = 20): Promise<Paginated<FailureRecord>> {
       return pageSchema(failureSchema).parse(

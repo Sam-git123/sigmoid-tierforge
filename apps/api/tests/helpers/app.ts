@@ -13,6 +13,9 @@ export function createFoundationApp(options: { logger: Logger; checkDatabase: Ch
       async getJob() {
         throw new Error('Unexpected job service call in a foundation test');
       },
+      async listJobs() {
+        throw new Error('Unexpected job service call in a foundation test');
+      },
     },
   });
 }

@@ -30,7 +30,11 @@ describe.skipIf(!connectionString)('PostgreSQL foundation (isolated schema)', ()
       connectionTimeoutMillis: 3000,
       statement_timeout: 5000,
     });
-    expect(await runMigrations(pool)).toEqual(['001_foundation.sql', '002_job_failure_streak.sql']);
+    expect(await runMigrations(pool)).toEqual([
+      '001_foundation.sql',
+      '002_job_failure_streak.sql',
+      '003_concurrent_jobs_and_global_rate_limit.sql',
+    ]);
   });
   afterAll(async () => {
     await pool?.end();
@@ -86,7 +90,7 @@ describe.skipIf(!connectionString)('PostgreSQL foundation (isolated schema)', ()
   });
   it('reruns migrations without changes', async () => {
     expect(await runMigrations(pool)).toEqual([]);
-    expect((await pool.query('SELECT count(*) FROM schema_migrations')).rows[0].count).toBe('2');
+    expect((await pool.query('SELECT count(*) FROM schema_migrations')).rows[0].count).toBe('3');
   });
   it('rejects duplicate stores within a job', () =>
     rollbackTest(async (client) => {
@@ -99,7 +103,7 @@ describe.skipIf(!connectionString)('PostgreSQL foundation (isolated schema)', ()
         ),
       ).rejects.toMatchObject({ code: '23505' });
     }));
-  it.each(['queued', 'running'])('rejects a second active %s job', (status) =>
+  it.each(['queued', 'running'])('allows a second active %s job', (status) =>
     rollbackTest(async (client) => {
       await seed(client);
       await expect(
@@ -108,7 +112,7 @@ describe.skipIf(!connectionString)('PostgreSQL foundation (isolated schema)', ()
       VALUES ($1, CASE WHEN $1 = 'running' THEN now() ELSE NULL END)`,
           [status],
         ),
-      ).rejects.toMatchObject({ code: '23505' });
+      ).resolves.toMatchObject({ rowCount: 1 });
     }),
   );
   it('allows a subsequent job after the previous job is terminal', () =>
@@ -121,25 +125,31 @@ describe.skipIf(!connectionString)('PostgreSQL foundation (isolated schema)', ()
         rowCount: 1,
       });
     }));
-  it('enforces the active-job constraint across simultaneous connections', async () => {
+  it('admits active jobs concurrently across independent connections', async () => {
     const first = await pool.connect();
     const second = await pool.connect();
-    const id = randomUUID();
+    const firstId = randomUUID();
+    const secondId = randomUUID();
     try {
       await first.query('BEGIN');
       await second.query('BEGIN');
-      await first.query('INSERT INTO jobs (id) VALUES ($1)', [id]);
-      const rejected = expect(
-        second.query('INSERT INTO jobs DEFAULT VALUES'),
-      ).rejects.toMatchObject({ code: '23505' });
+      await first.query('INSERT INTO jobs (id) VALUES ($1)', [firstId]);
+      await second.query('INSERT INTO jobs (id) VALUES ($1)', [secondId]);
       await first.query('COMMIT');
-      await rejected;
+      await second.query('COMMIT');
+      expect(
+        (
+          await pool.query('SELECT count(*)::integer AS count FROM jobs WHERE id = ANY($1)', [
+            [firstId, secondId],
+          ])
+        ).rows[0].count,
+      ).toBe(2);
     } finally {
       await first.query('ROLLBACK');
       await second.query('ROLLBACK');
       first.release();
       second.release();
-      await pool.query('DELETE FROM jobs WHERE id = $1', [id]);
+      await pool.query('DELETE FROM jobs WHERE id = ANY($1)', [[firstId, secondId]]);
     }
   });
   it.each([
@@ -284,12 +294,13 @@ describe.skipIf(!connectionString)('PostgreSQL foundation (isolated schema)', ()
     );
     expect(result.rows.map((row) => row.indexname)).toEqual(
       expect.arrayContaining([
-        'jobs_single_active_idx',
+        'jobs_active_scheduler_idx',
         'job_stores_pending_idx',
         'job_stores_retry_eligible_idx',
         'job_stores_expired_lease_idx',
         'job_stores_status_idx',
         'store_scores_tier_idx',
+        'enrichment_rate_limit_pkey',
       ]),
     );
   });
@@ -301,23 +312,29 @@ describe.skipIf(!connectionString)('PostgreSQL foundation (isolated schema)', ()
     const failureStreakSource = fileURLToPath(
       new URL('../migrations/002_job_failure_streak.sql', import.meta.url),
     );
+    const bonusSource = fileURLToPath(
+      new URL('../migrations/003_concurrent_jobs_and_global_rate_limit.sql', import.meta.url),
+    );
     const first = join(directory, '001_foundation.sql');
     const second = join(directory, '002_job_failure_streak.sql');
-    const broken = join(directory, '003_broken.sql');
+    const third = join(directory, '003_concurrent_jobs_and_global_rate_limit.sql');
+    const broken = join(directory, '004_broken.sql');
     try {
       await copyFile(foundationSource, first);
       await copyFile(failureStreakSource, second);
+      await copyFile(bonusSource, third);
       await writeFile(broken, 'CREATE TABLE should_rollback (id integer); SELECT invalid_column;');
       await expect(runMigrations(pool, directory)).rejects.toMatchObject({ code: '42703' });
       expect(
         (await pool.query("SELECT to_regclass('should_rollback') AS relation")).rows[0].relation,
       ).toBeNull();
-      expect((await pool.query('SELECT count(*) FROM schema_migrations')).rows[0].count).toBe('2');
+      expect((await pool.query('SELECT count(*) FROM schema_migrations')).rows[0].count).toBe('3');
       await writeFile(first, '-- changed migration');
       await expect(runMigrations(pool, directory)).rejects.toThrow('Applied migration has changed');
     } finally {
       await unlink(first);
       await unlink(second);
+      await unlink(third);
       await unlink(broken);
       await rmdir(directory);
     }

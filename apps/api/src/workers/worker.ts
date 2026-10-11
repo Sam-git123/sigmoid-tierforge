@@ -11,7 +11,7 @@ import type { RequestStartLimiter } from './rate-limiter.js';
 import { computeBackoffDelayMs } from './retry-policy.js';
 
 interface WorkerDependencies {
-  jobId: string;
+  jobId?: string;
   workerId: number;
   repository: EnrichmentRepository;
   client: EnrichmentClient;
@@ -20,6 +20,8 @@ interface WorkerDependencies {
   retryBaseDelayMs: number;
   retryMaxDelayMs: number;
   systemicFailureStreak?: number;
+  maxProcessing?: number;
+  shouldStop?: () => boolean;
   random?: () => number;
   logger: Logger;
 }
@@ -100,10 +102,16 @@ export async function runWorker(dependencies: WorkerDependencies): Promise<void>
   const { jobId, workerId, repository, client, rateLimiter, leaseDurationMs, logger } =
     dependencies;
   while (true) {
-    const claim = await repository.claimNextStore(jobId, leaseDurationMs);
+    if (dependencies.shouldStop?.()) return;
+    const claim = jobId
+      ? await repository.claimNextStore(jobId, leaseDurationMs)
+      : await repository.claimNextStoreAcrossJobs(leaseDurationMs, dependencies.maxProcessing ?? 1);
     if (!claim) return;
     logger.debug({ workerId, ...correlation(claim) }, 'Store claimed');
     await rateLimiter.waitForSlot();
+    // Graceful shutdown stops new dispatch. The durable processing lease is
+    // intentionally left for another process to recover after expiry.
+    if (dependencies.shouldStop?.()) return;
     if (!(await repository.isClaimCurrent(claim))) {
       logger.warn({ workerId, ...correlation(claim) }, 'Expired or revoked claim not dispatched');
       continue;
@@ -115,7 +123,7 @@ export async function runWorker(dependencies: WorkerDependencies): Promise<void>
     } catch (cause) {
       const error = describeFailure(cause);
       if (error.retryAfterMs !== undefined) {
-        rateLimiter.deferFor(error.retryAfterMs);
+        await rateLimiter.deferFor(error.retryAfterMs);
       }
       logger.warn(
         { workerId, ...correlation(claim), ...errorLog(error) },

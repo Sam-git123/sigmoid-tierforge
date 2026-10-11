@@ -602,6 +602,7 @@ describe.skipIf(!connectionString)('enrichment engine with PostgreSQL', () => {
     });
 
     try {
+      await coordinator.start();
       const response = await request(app)
         .post('/api/jobs')
         .attach(
@@ -805,6 +806,276 @@ describe.skipIf(!connectionString)('enrichment engine with PostgreSQL', () => {
     await expect(
       createJobRepository(database.pool).createJobWithStores([store('NEXT')], 5),
     ).resolves.toMatchObject({ status: 'queued' });
+  });
+
+  it('claims fairly across three jobs while enforcing one database-wide processing cap', async () => {
+    const jobs = await Promise.all(
+      ['A', 'B', 'C'].map((prefix) =>
+        createJobRepository(database.pool).createJobWithStores(
+          [store(`${prefix}1`), store(`${prefix}2`)],
+          3,
+        ),
+      ),
+    );
+    const repository = createEnrichmentRepository(database.pool);
+    const claims = await Promise.all(
+      Array.from({ length: 3 }, () => repository.claimNextStoreAcrossJobs(20_000, 3)),
+    );
+    expect(claims.every(Boolean)).toBe(true);
+    expect(new Set(claims.map((claim) => claim?.jobId))).toEqual(
+      new Set(jobs.map((job) => job.jobId)),
+    );
+    await expect(repository.claimNextStoreAcrossJobs(20_000, 3)).resolves.toBeNull();
+    expect(
+      (
+        await database.pool.query(
+          "SELECT count(*)::integer AS count FROM jobs WHERE status = 'running'",
+        )
+      ).rows[0].count,
+    ).toBe(3);
+  });
+
+  it('isolates one systemically failed job while another job completes', async () => {
+    const failing = await createJobRepository(database.pool).createJobWithStores(
+      [store('FAIL-1'), store('FAIL-2')],
+      3,
+    );
+    const healthy = await createJobRepository(database.pool).createJobWithStores(
+      [store('GOOD-1'), store('GOOD-2')],
+      3,
+    );
+    const client: EnrichmentClient = {
+      enrich: vi.fn(async (claimed) => {
+        if (claimed.storeId.startsWith('FAIL')) {
+          throw new EnrichmentAttemptError({
+            code: 'PERMANENT_ERROR',
+            message: 'Enrichment API returned HTTP 401.',
+            retryable: false,
+            status: 401,
+          });
+        }
+        return {
+          estimatedMonthlyFootfall: 10,
+          estimatedMonthlyRevenue: 20,
+          storeSizeSqft: 30,
+        };
+      }),
+    };
+    const coordinator = createCoordinator({
+      repository: createEnrichmentRepository(database.pool),
+      client,
+      rateLimiter: { waitForSlot: vi.fn().mockResolvedValue(undefined), deferFor: vi.fn() },
+      logger,
+      concurrency: 2,
+      leaseDurationMs: 20_000,
+      leaseReaperIntervalMs: 5,
+      retryBaseDelayMs: 1,
+      retryMaxDelayMs: 10,
+      systemicFailureStreak: 30,
+    });
+    try {
+      await coordinator.start();
+      await waitUntil(async () => {
+        const statuses = await database.pool.query<{ status: string }>(
+          'SELECT status FROM jobs WHERE id = ANY($1)',
+          [[failing.jobId, healthy.jobId]],
+        );
+        return statuses.rows.every((row) =>
+          ['completed', 'completed_with_errors', 'failed'].includes(row.status),
+        );
+      });
+      expect(await createJobRepository(database.pool).getJobProgress(failing.jobId)).toMatchObject({
+        status: 'failed',
+        failureCode: 'SYSTEMIC_PROVIDER_FAILURE',
+      });
+      expect(await createJobRepository(database.pool).getJobProgress(healthy.jobId)).toMatchObject({
+        status: 'completed',
+        counts: { succeeded: 2 },
+      });
+      expect(
+        (
+          await database.pool.query(
+            'SELECT count(*)::integer AS count FROM store_enrichments WHERE job_id = $1',
+            [failing.jobId],
+          )
+        ).rows[0].count,
+      ).toBe(0);
+    } finally {
+      await coordinator.stop();
+    }
+  });
+
+  it('resumes expired in-flight work without re-enriching committed successes', async () => {
+    const job = await createJobRepository(database.pool).createJobWithStores(
+      [store('DONE'), store('INFLIGHT')],
+      3,
+    );
+    const repository = createEnrichmentRepository(database.pool);
+    await repository.startJob(job.jobId);
+    const done = await repository.claimNextStore(job.jobId, 20_000);
+    if (!done) throw new Error('Expected completed-store claim');
+    await repository.completeStore(done, {
+      estimatedMonthlyFootfall: 111,
+      estimatedMonthlyRevenue: 222,
+      storeSizeSqft: 333,
+    });
+    const abandoned = await repository.claimNextStore(job.jobId, 20_000);
+    if (!abandoned) throw new Error('Expected in-flight claim');
+    await database.pool.query(
+      `UPDATE job_stores SET lease_expires_at = clock_timestamp() - interval '1 second'
+       WHERE job_id = $1 AND store_id = 'INFLIGHT'`,
+      [job.jobId],
+    );
+    const before = (
+      await database.pool.query(
+        `SELECT s.attempt_count, e.estimated_monthly_footfall, e.enriched_at
+         FROM job_stores s JOIN store_enrichments e USING (job_id, store_id)
+         WHERE s.job_id = $1 AND s.store_id = 'DONE'`,
+        [job.jobId],
+      )
+    ).rows[0];
+    const client: EnrichmentClient = {
+      enrich: vi.fn().mockResolvedValue({
+        estimatedMonthlyFootfall: 10,
+        estimatedMonthlyRevenue: 20,
+        storeSizeSqft: 30,
+      }),
+    };
+    const coordinator = createCoordinator({
+      repository,
+      client,
+      rateLimiter: { waitForSlot: vi.fn().mockResolvedValue(undefined), deferFor: vi.fn() },
+      logger,
+      concurrency: 1,
+      leaseDurationMs: 20_000,
+      leaseReaperIntervalMs: 5,
+      retryBaseDelayMs: 1,
+      retryMaxDelayMs: 10,
+      systemicFailureStreak: 30,
+      random: () => 0,
+    });
+    try {
+      await coordinator.start();
+      await coordinator.start();
+      await waitUntil(async () => {
+        const result = await database.pool.query('SELECT status FROM jobs WHERE id = $1', [
+          job.jobId,
+        ]);
+        return result.rows[0]?.status === 'completed';
+      });
+      expect(client.enrich).toHaveBeenCalledOnce();
+      expect(vi.mocked(client.enrich).mock.calls[0]?.[0]).toMatchObject({ storeId: 'INFLIGHT' });
+      const after = (
+        await database.pool.query(
+          `SELECT s.attempt_count, e.estimated_monthly_footfall, e.enriched_at
+           FROM job_stores s JOIN store_enrichments e USING (job_id, store_id)
+           WHERE s.job_id = $1 AND s.store_id = 'DONE'`,
+          [job.jobId],
+        )
+      ).rows[0];
+      expect(after).toEqual(before);
+    } finally {
+      await coordinator.stop();
+    }
+  });
+
+  it('finalizes a stranded running job on startup without dispatching work', async () => {
+    const job = await createJobRepository(database.pool).createJobWithStores([store('DONE')], 3);
+    await database.pool.query(
+      "UPDATE jobs SET status = 'running', started_at = clock_timestamp() WHERE id = $1",
+      [job.jobId],
+    );
+    await database.pool.query("UPDATE job_stores SET status = 'succeeded' WHERE job_id = $1", [
+      job.jobId,
+    ]);
+    await database.pool.query(
+      `INSERT INTO store_enrichments
+         (job_id, store_id, estimated_monthly_footfall, estimated_monthly_revenue, store_size_sqft)
+       VALUES ($1, 'DONE', 1, 2, 3)`,
+      [job.jobId],
+    );
+    const client: EnrichmentClient = { enrich: vi.fn() };
+    const coordinator = createCoordinator({
+      repository: createEnrichmentRepository(database.pool),
+      client,
+      rateLimiter: { waitForSlot: vi.fn().mockResolvedValue(undefined), deferFor: vi.fn() },
+      logger,
+      concurrency: 1,
+      leaseDurationMs: 20_000,
+      leaseReaperIntervalMs: 5,
+      retryBaseDelayMs: 1,
+      retryMaxDelayMs: 10,
+    });
+    try {
+      await coordinator.start();
+      await waitUntil(async () =>
+        Boolean(
+          (
+            await database.pool.query(
+              "SELECT 1 FROM jobs WHERE id = $1 AND status = 'completed' AND finished_at IS NOT NULL",
+              [job.jobId],
+            )
+          ).rowCount,
+        ),
+      );
+      expect(client.enrich).not.toHaveBeenCalled();
+    } finally {
+      await coordinator.stop();
+    }
+  });
+
+  it('preserves a future retry schedule across coordinator restart', async () => {
+    const job = await createJobRepository(database.pool).createJobWithStores([store('WAIT')], 3);
+    const repository = createEnrichmentRepository(database.pool);
+    await repository.startJob(job.jobId);
+    const claim = await repository.claimNextStore(job.jobId, 20_000);
+    if (!claim) throw new Error('Expected retry fixture claim');
+    await repository.recordAttemptFailure(
+      claim,
+      { code: 'PROVIDER_ERROR', message: 'Temporary failure', systemicImpact: 'increment' },
+      500,
+      30,
+    );
+    const client: EnrichmentClient = {
+      enrich: vi.fn().mockResolvedValue({
+        estimatedMonthlyFootfall: 10,
+        estimatedMonthlyRevenue: 20,
+        storeSizeSqft: 30,
+      }),
+    };
+    const coordinator = createCoordinator({
+      repository,
+      client,
+      rateLimiter: { waitForSlot: vi.fn().mockResolvedValue(undefined), deferFor: vi.fn() },
+      logger,
+      concurrency: 1,
+      leaseDurationMs: 20_000,
+      leaseReaperIntervalMs: 20,
+      retryBaseDelayMs: 1,
+      retryMaxDelayMs: 10,
+    });
+    try {
+      await coordinator.start();
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(client.enrich).not.toHaveBeenCalled();
+      await waitUntil(async () => {
+        const result = await database.pool.query('SELECT status FROM jobs WHERE id = $1', [
+          job.jobId,
+        ]);
+        return result.rows[0]?.status === 'completed';
+      });
+      expect(client.enrich).toHaveBeenCalledOnce();
+      expect(
+        (
+          await database.pool.query(
+            'SELECT attempt_count FROM job_stores WHERE job_id = $1 AND store_id = $2',
+            [job.jobId, 'WAIT'],
+          )
+        ).rows[0].attempt_count,
+      ).toBe(2);
+    } finally {
+      await coordinator.stop();
+    }
   });
 
   it('does not duplicate completion writes during coordinator shutdown', async () => {

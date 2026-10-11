@@ -1,6 +1,7 @@
 import type { StoreTier } from './tierforge';
 
 export const queryKeys = {
+  jobs: ['jobs'] as const,
   job: (jobId: string) => ['job', jobId] as const,
   failures: (jobId: string, page: number) => ['failures', jobId, page] as const,
   scoring: (jobId: string) => ['scoring', jobId] as const,

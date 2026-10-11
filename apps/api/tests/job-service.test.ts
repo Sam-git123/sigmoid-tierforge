@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createJobService } from '../src/services/job-service.js';
 import type { JobRepository } from '../src/repositories/job-repository.js';
-import { ActiveJobConflict } from '../src/errors/active-job-conflict.js';
 
 const csv = Buffer.from(
   'store_id,store_name,address,city,state,country\nST1,Name,Address,City,State,Country',
@@ -12,6 +11,7 @@ function setup() {
     getJobById: vi.fn(),
     getJobProgress: vi.fn(),
     findActiveJob: vi.fn(),
+    listJobs: vi.fn(),
   };
   const service = createJobService(repository, { maxBytes: 10000, maxRows: 100, maxAttempts: 4 });
   return { repository, service };
@@ -76,16 +76,6 @@ describe('job service boundaries', () => {
     expect(vi.mocked(repository.createJobWithStores).mock.invocationCallOrder[0]!).toBeLessThan(
       starter.notifyJobCreated.mock.invocationCallOrder[0]!,
     );
-  });
-  it('handles a conflict even if the winning job finishes before lookup', async () => {
-    const { repository, service } = setup();
-    vi.mocked(repository.createJobWithStores).mockRejectedValue(new ActiveJobConflict());
-    vi.mocked(repository.findActiveJob).mockResolvedValue(null);
-    await expect(service.createJob(csv)).rejects.toMatchObject({
-      status: 409,
-      code: 'ACTIVE_JOB_EXISTS',
-      details: { activeJobId: null },
-    });
   });
   it('does not mislabel unexpected database failures as conflicts', async () => {
     const { repository, service } = setup();
